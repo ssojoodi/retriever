@@ -9,13 +9,13 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 - Bundle identifiers: `ca.sahand.Retriever`, `ca.sahand.RetrieverCore`, `ca.sahand.RetrieverCoreTests`. Inferred personal namespace; confirm before distribution.
 - One retained window; closing the last window quits. Follow system light/dark appearance.
 - Connection and selection state are transient initially. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
-- Direct Developer ID distribution, separately signed and notarized DMG. Intended universal arm64/x86_64 release; only claim support after verifying both architectures.
+- Direct Developer ID distribution, separately signed and notarized DMG. Universal arm64/x86_64 Release compilation and binary slices verified. Intel runtime remains untested.
 - Initial non-goals: FTP, uploads, remote deletion, synchronization, tabs, bookmarks, website, App Store.
 - No license grant selected yet; do not copy a reference project's license.
 
 ## Layout and commands
 Xcode is authoritative. `Sources/RetrieverApp` owns UI; `Sources/RetrieverCore` owns testable connection and transfer behavior; `Tests/RetrieverCoreTests` owns XCTest cases. Explicit project membership is required for new files.
-`make build`, `make test`, `make check-windows`, `make check-ssh`, `make check-browser`, `make run`, `make assets`, `make paths`, `make help`.
+`make build`, `make build-universal`, `make test`, `make check-windows`, `make check-ssh`, `make check-browser`, `make run`, `make assets`, `make paths`, `make help`.
 Generated output: `.build/`; inspected screenshots: `artifacts/verification/`; iteration plans: `docs/`.
 Shared version and signing settings live in `Config/Signing.xcconfig`. Local credentials remain ignored. Unsigned development works without release credentials. Release pipeline is a later milestone and must not report success until signing/notarization and DMG validation pass.
 

@@ -4,11 +4,15 @@ SCHEME ?= Retriever
 CONFIGURATION ?= Debug
 DESTINATION ?= platform=macOS
 DERIVED_DATA ?= .build/DerivedData
+UNIVERSAL_DERIVED_DATA ?= .build/ReleaseVerification
 APP = $(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/Retriever.app
 XCODE = xcrun xcodebuild -project "$(PROJECT)" -scheme "$(SCHEME)" -configuration "$(CONFIGURATION)" -destination "$(DESTINATION)" -derivedDataPath "$(DERIVED_DATA)" CODE_SIGNING_ALLOWED=NO
 -include release.env
-.PHONY: check-browser check-ssh assets check-windows build buildlocal test run paths help release clean
+.PHONY: build-universal check-browser check-ssh assets check-windows build buildlocal test run paths help release clean
 build: buildlocal
+build-universal:
+	xcrun xcodebuild -project "$(PROJECT)" -scheme "$(SCHEME)" -configuration Release -destination "generic/platform=macOS" -derivedDataPath "$(UNIVERSAL_DERIVED_DATA)" CODE_SIGNING_ALLOWED=NO "ARCHS=arm64 x86_64" ONLY_ACTIVE_ARCH=NO build
+	bash scripts/verify_universal.sh "$(UNIVERSAL_DERIVED_DATA)/Build/Products/Release/Retriever.app"
 buildlocal:
 	$(XCODE) build
 test:
@@ -30,7 +34,7 @@ assets:
 paths:
 	@echo "App: $(APP)"
 help:
-	@echo "make build | test | check-windows | check-ssh | check-browser | assets | run | paths | clean"
+	@echo "make build | build-universal | test | check-windows | check-ssh | check-browser | assets | run | paths | clean"
 release:
 	@echo "Release pipeline is not implemented yet; no distributable has been produced." >&2
 	@exit 1
