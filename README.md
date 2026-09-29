@@ -38,3 +38,5 @@ Icon artwork is editable in `Brand/RenderIcon.swift`. Run `make assets` to regen
 Use Help → Retriever Help for offline connection, trust, download and cancellation instructions and keyboard shortcuts. The Help panel is reusable and does not interrupt transfers.
 
 For a manual packaged-app test, run `make build`, then `python3 scripts/manual_browser_check.py` in a logged-in macOS session. It prints local connection details and a host fingerprint, then launches the built app with a separate temporary SSH agent. Connect using the printed details, verify the fingerprint, browse the empty folder, and download `retriever-test.txt`. The expected text is `Retrieved successfully with Retriever.` Quit that app instance to stop the server and remove temporary keys. Accepting host trust uses your normal SSH known-hosts file; the fixture does not edit SSH configuration.
+
+`python3 scripts/manual_askpass_check.py` opens two packaged native authentication prompts: enter the displayed dummy value and Continue, then Cancel the second. The runner verifies response bytes and exit status without printing the input. This manual check passed on September 29, 2026.
