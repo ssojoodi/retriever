@@ -13,6 +13,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
     private var directory: RemoteDirectory?
     private var cancellation: SFTPCancellation?
     private(set) var busy = false
+    private var afterCleanup: (@MainActor () -> Void)?
 
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -164,6 +165,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
             busy = false
             cancellation = nil
             updateControls()
+            let completion = afterCleanup
+            afterCleanup = nil
+            completion?()
         }
     }
     private func show(_ result: RemoteDirectory) {
@@ -222,19 +226,26 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
             status.stringValue = "Not connected"
         }
     }
-    func confirmTermination() -> Bool {
+    /// Returns true when immediate closing is safe; otherwise resolves the user's
+    /// choice and defers the completion until the worker has removed partial files.
+    func requestClose(afterCancellation: @escaping @MainActor () -> Void) -> Bool {
         guard busy else { return true }
+        guard afterCleanup == nil else { return false }
         let alert = NSAlert()
-        alert.messageText = "Cancel the current operation?"
+        alert.messageText = "Cancel the current operation and close?"
         alert.informativeText = "The connection will close and any partial download will be removed."
         alert.addButton(withTitle: "Keep Working")
-        alert.addButton(withTitle: "Cancel Operation")
+        alert.addButton(withTitle: "Cancel and Close")
         guard alert.runModal() == .alertSecondButtonReturn else { return false }
+        // A worker completion can arrive while the modal alert runs.
+        guard busy else { return true }
+        afterCleanup = afterCancellation
         cancel(nil)
-        // Let the worker clean up before allowing a subsequent close or quit.
         return false
     }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { confirmTermination() }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        requestClose { [weak sender] in sender?.performClose(nil) }
+    }
     func windowWillClose(_ notification: Notification) {
         let browser = browser
         Task { await browser.disconnect() }

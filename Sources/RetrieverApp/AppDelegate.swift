@@ -9,7 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        controller?.confirmTermination() == false ? .terminateCancel : .terminateNow
+        guard let controller else { return .terminateNow }
+        let canQuit = controller.requestClose { NSApp.terminate(nil) }
+        return canQuit ? .terminateNow : .terminateCancel
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }

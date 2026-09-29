@@ -100,6 +100,35 @@ final class SFTPTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 2)
     }
 
+    func testBlockedRequestWriteCanBeCancelled() throws {
+        let cancellation = SFTPCancellation()
+        // Emit an SFTP v3 greeting, then keep stdin open without reading it.
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", #"printf '\000\000\000\005\002\000\000\000\003'; exec /bin/sleep 5"#], cancellation: cancellation)
+        defer { session.disconnect() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { cancellation.cancel() }
+        let started = Date()
+        XCTAssertThrowsError(try session.canonicalPath(Data(repeating: 65, count: 1_000_000))) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+    }
+
+    func testBlockedRequestWriteTimesOut() throws {
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", #"printf '\000\000\000\005\002\000\000\000\003'; exec /bin/sleep 5"#], idleTimeout: 0.2)
+        defer { session.disconnect() }
+        XCTAssertThrowsError(try session.canonicalPath(Data(repeating: 65, count: 1_000_000))) { error in
+            XCTAssertEqual(error as? SFTPError, .timedOut)
+        }
+    }
+
+    func testClosedServerInputDoesNotTerminateClient() throws {
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", #"exec 0<&-; printf '\000\000\000\005\002\000\000\000\003'; exec /bin/sleep 5"#])
+        defer { session.disconnect() }
+        XCTAssertThrowsError(try session.canonicalPath(Data(repeating: 65, count: 1_000_000))) { error in
+            XCTAssertEqual(error as? SFTPError, .disconnected)
+        }
+    }
+
     private func makeFixture() throws -> URL {
         let result = FileManager.default.temporaryDirectory.appendingPathComponent("retriever-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: result, withIntermediateDirectories: false)

@@ -7,14 +7,15 @@ Requires macOS 14 or later and full Xcode (developed with Xcode 26.6, Swift 6). 
 ```
 make build
 make test
+make check-windows
 make run
 ```
 
 Xcode is the authoritative build: open `Retriever.xcodeproj`, select the shared `Retriever` scheme, and build. Debug and Release use Swift 6. Outputs stay in `.build/DerivedData` for command-line builds. `make paths` prints the exact app path; `make clean` cleans build products through Xcode.
 
-Current workflow: connect with existing SSH keys/agent to a host already trusted in your SSH known-hosts file, browse folders, and download selected regular files. Double-click folders to open them; use Up to return, Refresh to reload, and Download (⌘D) to choose a local destination. Existing files are preserved: choose a new filename. Cancel disconnects and removes partial output. A server that stops sending data times out after 30 seconds. Password and first-use host trust prompts are not implemented yet.
+Current workflow: connect with existing SSH keys/agent to a host already trusted in your SSH known-hosts file, browse folders, and download selected regular files. Double-click folders to open them; use Up to return, Refresh to reload, and Download (⌘D) to choose a local destination. Existing files are preserved: choose a new filename. Cancel disconnects and removes partial output. A server that stops sending or accepting data times out after 30 seconds. Closing or quitting during work offers cancellation and completes after cleanup. Password and first-use host trust prompts are not implemented yet.
 
-The native browser is wired to the tested SFTP core; authenticated SSH through the UI still needs end-to-end verification. App icon assets and AppKit integration checks remain pending.
+The native browser is wired to the tested SFTP core; authenticated SSH through the UI still needs end-to-end verification. App icon assets and authenticated workflow checks remain pending. `make check-windows` requires a logged-in GUI session and verifies initial action states, active-window routing, connection-sheet text focus/cancellation, minimum-size resize, idle close and controller release. It is separate from the core tests.
 
 `Sources/RetrieverApp` contains AppKit UI, `Sources/RetrieverCore` contains testable behavior, and `Tests/RetrieverCoreTests` contains hostless XCTest tests. Plans and evidence notes are tracked under `docs/`; screenshot artifacts are ignored under `artifacts/verification/`. No connection details or credentials are persisted. Closing the last window quits.
 

@@ -15,7 +15,7 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 
 ## Layout and commands
 Xcode is authoritative. `Sources/RetrieverApp` owns UI; `Sources/RetrieverCore` owns testable connection and transfer behavior; `Tests/RetrieverCoreTests` owns XCTest cases. Explicit project membership is required for new files.
-`make build`, `make test`, `make run`, `make assets`, `make paths`, `make help`.
+`make build`, `make test`, `make check-windows`, `make run`, `make assets`, `make paths`, `make help`.
 Generated output: `.build/`; inspected screenshots: `artifacts/verification/`; iteration plans: `docs/`.
 Shared version and signing settings live in `Config/Signing.xcconfig`. Local credentials remain ignored. Unsigned development works without release credentials. Release pipeline is a later milestone and must not report success until signing/notarization and DMG validation pass.
 
@@ -30,4 +30,4 @@ Shared version and signing settings live in `Config/Signing.xcconfig`. Local cre
 - Create a new timestamped plan for every iteration. Commit finished milestones with short messages.
 
 ## SFTP core
-`SFTPPacket.swift` implements bounded SFTP v3 decoding; `SFTPSession.swift` owns a synchronous process stream and must be used on one dedicated worker, never the main thread. Production uses system SSH with strict known-host verification and batch key/agent authentication. Test injection launches local sftp-server. Remote filenames retain raw bytes. Download publication uses a sibling temporary file and a non-replacing hard link. `SFTPBrowser` owns the session on an actor with a dedicated Dispatch executor. UI operations pass a lock-protected cancellation signal; reads poll every 100 ms and have a 30-second idle timeout. Cancelling disconnects the session. Interactive authentication and detailed SSH error diagnostics remain pending.
+`SFTPPacket.swift` implements bounded SFTP v3 decoding; `SFTPSession.swift` owns a synchronous process stream and must be used on one dedicated worker, never the main thread. Production uses system SSH with strict known-host verification and batch key/agent authentication. Test injection launches local sftp-server. Remote filenames retain raw bytes. Download publication uses a sibling temporary file and a non-replacing hard link. `SFTPBrowser` owns the session on an actor with a dedicated Dispatch executor. UI operations pass a lock-protected cancellation signal; reads and writes poll every 100 ms and have a 30-second idle timeout. Cancelling disconnects the session. Interactive authentication and detailed SSH error diagnostics remain pending.

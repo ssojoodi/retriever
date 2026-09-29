@@ -37,6 +37,9 @@ public final class SFTPSession {
         try input.fileHandleForReading.close()
         try output.fileHandleForWriting.close()
         do {
+            let descriptor = input.fileHandleForWriting.fileDescriptor
+            guard fcntl(descriptor, F_SETFL, O_NONBLOCK) != -1,
+                  fcntl(descriptor, F_SETNOSIGPIPE, 1) != -1 else { throw SFTPError.disconnected }
             var initialization = SFTPWriter()
             initialization.byte(1)
             initialization.uint32(3)
@@ -181,8 +184,29 @@ public final class SFTPSession {
     }
 
     private func send(_ packet: SFTPWriter) throws {
-        try cancellation.check()
-        try input.fileHandleForWriting.write(contentsOf: packet.framed())
+        let bytes = packet.framed()
+        let descriptor = input.fileHandleForWriting.fileDescriptor
+        var offset = 0
+        var lastWrite = ProcessInfo.processInfo.systemUptime
+        while offset < bytes.count {
+            try cancellation.check()
+            guard ProcessInfo.processInfo.systemUptime - lastWrite < idleTimeout else { throw SFTPError.timedOut }
+            var state = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+            let ready = poll(&state, 1, 100)
+            if ready < 0 {
+                if errno == EINTR { continue }
+                throw SFTPError.disconnected
+            }
+            if ready == 0 { continue }
+            guard state.revents & Int16(POLLERR | POLLHUP | POLLNVAL) == 0 else { throw SFTPError.disconnected }
+            let written = bytes.withUnsafeBytes { buffer in
+                Darwin.write(descriptor, buffer.baseAddress!.advanced(by: offset), min(bytes.count - offset, 32768))
+            }
+            if written < 0, errno == EAGAIN || errno == EINTR { continue }
+            guard written > 0 else { throw SFTPError.disconnected }
+            offset += written
+            lastWrite = ProcessInfo.processInfo.systemUptime
+        }
     }
 
     private func receive() throws -> SFTPReader {
