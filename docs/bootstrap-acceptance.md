@@ -1,6 +1,6 @@
 # Bootstrap acceptance audit
 
-Current audit: 2026-09-29. The initial repository and functioning SFTP development app meet the bootstrap criteria. Signed distribution remains a separate, unverified milestone.
+Current audit: 2026-09-29. The initial repository and functioning SFTP development app meet the bootstrap criteria. Signed distribution has now passed the local release audit for 0.1.0 build 2; see docs/2026-09-29-00-55-final-release-audit.md for evidence and remaining environment limits.
 
 | Blueprint requirement | Current evidence | Remaining work |
 | --- | --- | --- |
@@ -13,10 +13,10 @@ Current audit: 2026-09-29. The initial repository and functioning SFTP developme
 | Trust and credentials | User reached native trust prompt and subsequently completed packaged-app download; prompt construction and scripted encrypted-key tests | Packaged native helper response and cancellation verified with dummy input; parent-exit cleanup verified by bounded process/pipe check; external password server not tested |
 | Transfer integrity | 21 core tests, exact bytes, mid-transfer cancellation, destination-race and symlink preservation | External-volume runtime remains untested; local transfer/error and preservation checks passed |
 | Window lifecycle | AppKit routing, text focus, sheet cancellation, minimum resize, idle close and release checks | Busy close preservation/cancellation/deferred close and controller release verified; packaged process exited with status 0 and fixture cleanup completed. User additionally confirmed ⌘W closes the main window and quits after closing About |
-| Predictable commands | build, test, run, assets, check-windows, check-ssh, check-browser, paths, help, clean | `make release` implements signing, notarization, DMG validation and a manual installed-copy gate; credential preflight checked, full pipeline unverified |
+| Predictable commands | build, test, run, assets, check-windows, check-ssh, check-browser, paths, help, clean | `make release` implements signing, notarization, DMG validation and a manual installed-copy gate; full pipeline verified for build 2 |
 | Reproducible brand assets | Native renderer, ten tracked icon slots, deterministic hashes and inspected raster sizes | User confirmed About icon; Finder-specific visual inspection not separately recorded |
 | Universal Release build | arm64 and x86_64 verified in app and framework; macOS 14 deployment metadata; version 0.1.0 build 1 | Intel runtime not tested |
-| Direct distribution | Signing config examples and version source tracked | Verified identity/profile, signing and notarized DMG pipeline, Gatekeeper and installed DMG checks; separate release milestone |
+| Direct distribution | Signing config examples and version source tracked | Signed/notarized build 2, Gatekeeper, mounted-copy user test and browser download verified; clean-account quarantine and Intel runtime remain untested |
 | Final handoff | README and AGENTS track commands and limitations | Final audit recorded in docs/2026-09-29-00-10-bootstrap-handoff.md; unrelated untracked logo/website work preserved |
 
 Do not treat the controller harness as the packaged executable. Do not treat scripted askpass replies as user interaction with the native helper. Keep core tests, GUI checks and release validation separate.

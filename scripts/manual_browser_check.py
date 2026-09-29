@@ -4,6 +4,7 @@
 Keeps the fixture alive until Retriever quits. Does not edit SSH configuration;
 accepting the native trust prompt uses the user's normal known_hosts file.
 """
+import argparse
 import getpass
 import os
 from pathlib import Path
@@ -25,7 +26,10 @@ def stop(process):
 
 def main():
     repo = Path(__file__).resolve().parent.parent
-    app = repo / '.build/DerivedData/Build/Products/Debug/Retriever.app/Contents/MacOS/Retriever'
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--app', type=Path, default=repo / '.build/DerivedData/Build/Products/Debug/Retriever.app')
+    args = parser.parse_args()
+    app = args.app.resolve() / 'Contents/MacOS/Retriever'
     if not app.is_file():
         raise RuntimeError('Run make build first.')
     checks = repo / '.build/checks'
