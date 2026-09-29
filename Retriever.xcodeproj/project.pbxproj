@@ -1,0 +1,109 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A00100100100100100100101 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200100100100100100101 /* AppState.swift */; };
+
+
+		A00100100100100100100106 /* RetrieverCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00200100100100100100106 /* RetrieverCore.framework */; };
+		A00100100100100100100107 /* RetrieverCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A00200100100100100100106 /* RetrieverCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A00100100100100100100108 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200100100100100100108 /* main.swift */; };
+		A00100100100100100100109 /* AppMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200100100100100100109 /* AppMenu.swift */; };
+		A0010010010010010010010A /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0020010010010010010010A /* MainWindowController.swift */; };
+
+		A00100100100100100100111 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00200100100100100100111 /* Assets.xcassets */; };
+		A0010010010010010010010C /* AppStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0020010010010010010010C /* AppStateTests.swift */; };
+		A0010010010010010010010D /* RetrieverCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00200100100100100100106 /* RetrieverCore.framework */; };
+		A00100100100100100100113 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200100100100100100113 /* AppDelegate.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A00300100100100100100101 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = A00400100100100100100101 /* Project object */; proxyType = 1; remoteGlobalIDString = A00500100100100100100101; remoteInfo = RetrieverCore; };
+		A00300100100100100100102 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = A00400100100100100100101 /* Project object */; proxyType = 1; remoteGlobalIDString = A00500100100100100100101; remoteInfo = RetrieverCore; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A00600100100100100100101 /* Embed Frameworks */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 10; files = (A00100100100100100100107 /* RetrieverCore.framework in Embed Frameworks */, ); name = "Embed Frameworks"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+ B00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
+		A00200100100100100100101 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+
+
+		A00200100100100100100106 /* RetrieverCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = RetrieverCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00200100100100100100107 /* Retriever.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Retriever.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00200100100100100100108 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A00200100100100100100109 /* AppMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMenu.swift; sourceTree = "<group>"; };
+		A0020010010010010010010A /* MainWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowController.swift; sourceTree = "<group>"; };
+
+		A00200100100100100100111 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A0020010010010010010010C /* AppStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateTests.swift; sourceTree = "<group>"; };
+		A0020010010010010010010D /* RetrieverCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RetrieverCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00200100100100100100113 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A00700100100100100100101 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00700100100100100100102 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00100100100100100100106 /* RetrieverCore.framework in Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A00700100100100100100103 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A0010010010010010010010D /* RetrieverCore.framework in Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A00800100100100100100101 = {isa = PBXGroup; children = (A00800100100100100100102 /* Sources */, A00800100100100100100105 /* Tests */, A00800100100100100100106 /* Products */, ); sourceTree = "<group>"; };
+		A00800100100100100100102 /* Sources */ = {isa = PBXGroup; children = (A00800100100100100100103 /* RetrieverCore */, A00800100100100100100104 /* RetrieverApp */, ); path = Sources; sourceTree = "<group>"; };
+		A00800100100100100100103 /* RetrieverCore */ = {isa = PBXGroup; children = (A00200100100100100100101 /* AppState.swift */, ); path = RetrieverCore; sourceTree = "<group>"; };
+		A00800100100100100100104 /* RetrieverApp */ = {isa = PBXGroup; children = (A00200100100100100100113 /* AppDelegate.swift */, A00200100100100100100108 /* main.swift */, A00200100100100100100109 /* AppMenu.swift */, A0020010010010010010010A /* MainWindowController.swift */, A00200100100100100100111 /* Assets.xcassets */, ); path = RetrieverApp; sourceTree = "<group>"; };
+		A00800100100100100100105 /* Tests */ = {isa = PBXGroup; children = (A0020010010010010010010C /* AppStateTests.swift */, ); path = Tests/RetrieverCoreTests; sourceTree = "<group>"; };
+		A00800100100100100100106 /* Products */ = {isa = PBXGroup; children = (A00200100100100100100106 /* RetrieverCore.framework */, A00200100100100100100107 /* Retriever.app */, A0020010010010010010010D /* RetrieverCoreTests.xctest */, ); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00500100100100100100101 /* RetrieverCore */ = {isa = PBXNativeTarget; buildConfigurationList = A00900100100100100100101 /* Build configuration list for PBXNativeTarget "RetrieverCore" */; buildPhases = (A01000100100100100100101 /* Sources */, A00700100100100100100101 /* Frameworks */, ); buildRules = (); dependencies = (); name = RetrieverCore; productName = RetrieverCore; productReference = A00200100100100100100106 /* RetrieverCore.framework */; productType = "com.apple.product-type.framework"; };
+		A00500100100100100100102 /* Retriever */ = {isa = PBXNativeTarget; buildConfigurationList = A00900100100100100100102 /* Build configuration list for PBXNativeTarget "Retriever" */; buildPhases = (A01000100100100100100102 /* Sources */, A00700100100100100100102 /* Frameworks */, A01300100100100100100101 /* Resources */, A00600100100100100100101 /* Embed Frameworks */, ); buildRules = (); dependencies = (A01100100100100100100101 /* PBXTargetDependency */, ); name = Retriever; productName = Retriever; productReference = A00200100100100100100107 /* Retriever.app */; productType = "com.apple.product-type.application"; };
+		A00500100100100100100103 /* RetrieverCoreTests */ = {isa = PBXNativeTarget; buildConfigurationList = A00900100100100100100103 /* Build configuration list for PBXNativeTarget "RetrieverCoreTests" */; buildPhases = (A01000100100100100100103 /* Sources */, A00700100100100100100103 /* Frameworks */, ); buildRules = (); dependencies = (A01100100100100100100102 /* PBXTargetDependency */, ); name = RetrieverCoreTests; productName = RetrieverCoreTests; productReference = A0020010010010010010010D /* RetrieverCoreTests.xctest */; productType = "com.apple.product-type.bundle.unit-test"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00400100100100100100101 /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2650; LastUpgradeCheck = 2650; TargetAttributes = {A00500100100100100100101 = {CreatedOnToolsVersion = 26.5; }; A00500100100100100100102 = {CreatedOnToolsVersion = 26.5; }; A00500100100100100100103 = {CreatedOnToolsVersion = 26.5; }; }; }; buildConfigurationList = A00900100100100100100100 /* Build configuration list for PBXProject "Retriever" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = A00800100100100100100101; productRefGroup = A00800100100100100100106 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A00500100100100100100101 /* RetrieverCore */, A00500100100100100100102 /* Retriever */, A00500100100100100100103 /* RetrieverCoreTests */, ); };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A01300100100100100100101 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00100100100100100100111 /* Assets.xcassets in Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A01000100100100100100101 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00100100100100100100101 /* AppState.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A01000100100100100100102 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00100100100100100100113 /* AppDelegate.swift in Sources */, A00100100100100100100108 /* main.swift in Sources */, A00100100100100100100109 /* AppMenu.swift in Sources */, A0010010010010010010010A /* MainWindowController.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A01000100100100100100103 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A0010010010010010010010C /* AppStateTests.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A01100100100100100100101 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A00500100100100100100101 /* RetrieverCore */; targetProxy = A00300100100100100100101 /* PBXContainerItemProxy */; };
+		A01100100100100100100102 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A00500100100100100100101 /* RetrieverCore */; targetProxy = A00300100100100100100102 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A01200100100100100100100 /* Debug */ = {isa = XCBuildConfiguration; baseConfigurationReference = B00000000000000000000001; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CODE_SIGNING_ALLOWED = NO; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_OPTIMIZATION_LEVEL = 0; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 6.0; }; name = Debug; };
+		A01200100100100100100101 /* Release */ = {isa = XCBuildConfiguration; baseConfigurationReference = B00000000000000000000001; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CODE_SIGNING_ALLOWED = NO; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_TESTABILITY = NO; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 6.0; }; name = Release; };
+		A01200100100100100100102 /* Debug */ = {isa = XCBuildConfiguration; baseConfigurationReference = B00000000000000000000001; buildSettings = {CODE_SIGNING_ALLOWED = NO; DEFINES_MODULE = YES; DYLIB_COMPATIBILITY_VERSION = 1; DYLIB_CURRENT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleName = RetrieverCore; INSTALL_PATH = "@rpath"; PRODUCT_BUNDLE_IDENTIFIER = ca.sahand.RetrieverCore; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; }; name = Debug; };
+		A01200100100100100100103 /* Release */ = {isa = XCBuildConfiguration; baseConfigurationReference = B00000000000000000000001; buildSettings = {CODE_SIGNING_ALLOWED = NO; DEFINES_MODULE = YES; DYLIB_COMPATIBILITY_VERSION = 1; DYLIB_CURRENT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleName = RetrieverCore; INSTALL_PATH = "@rpath"; PRODUCT_BUNDLE_IDENTIFIER = ca.sahand.RetrieverCore; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; }; name = Release; };
+		A01200100100100100100104 /* Debug */ = {isa = XCBuildConfiguration; baseConfigurationReference = B00000000000000000000001; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Retriever"; INFOPLIST_KEY_CFBundleIdentifier = ca.sahand.Retriever; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities"; INFOPLIST_KEY_NSHighResolutionCapable = YES; INFOPLIST_KEY_NSHumanReadableCopyright = "© Sahand Sojoodi, 2026"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = ca.sahand.Retriever; PRODUCT_NAME = "Retriever"; SKIP_INSTALL = NO; }; name = Debug; };
+		A01200100100100100100105 /* Release */ = {isa = XCBuildConfiguration; baseConfigurationReference = B00000000000000000000001; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Retriever"; INFOPLIST_KEY_CFBundleIdentifier = ca.sahand.Retriever; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities"; INFOPLIST_KEY_NSHighResolutionCapable = YES; INFOPLIST_KEY_NSHumanReadableCopyright = "© Sahand Sojoodi, 2026"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = ca.sahand.Retriever; PRODUCT_NAME = "Retriever"; SKIP_INSTALL = NO; }; name = Release; };
+		A01200100100100100100106 /* Debug */ = {isa = XCBuildConfiguration; baseConfigurationReference = B00000000000000000000001; buildSettings = {CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = ca.sahand.RetrieverCoreTests; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; }; name = Debug; };
+		A01200100100100100100107 /* Release */ = {isa = XCBuildConfiguration; baseConfigurationReference = B00000000000000000000001; buildSettings = {CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = YES; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = ca.sahand.RetrieverCoreTests; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; }; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A00900100100100100100100 /* Build configuration list for PBXProject "Retriever" */ = {isa = XCConfigurationList; buildConfigurations = (A01200100100100100100100 /* Debug */, A01200100100100100100101 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		A00900100100100100100101 /* Build configuration list for PBXNativeTarget "RetrieverCore" */ = {isa = XCConfigurationList; buildConfigurations = (A01200100100100100100102 /* Debug */, A01200100100100100100103 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		A00900100100100100100102 /* Build configuration list for PBXNativeTarget "Retriever" */ = {isa = XCConfigurationList; buildConfigurations = (A01200100100100100100104 /* Debug */, A01200100100100100100105 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		A00900100100100100100103 /* Build configuration list for PBXNativeTarget "RetrieverCoreTests" */ = {isa = XCConfigurationList; buildConfigurations = (A01200100100100100100106 /* Debug */, A01200100100100100100107 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+/* End XCConfigurationList section */
+	};
+	rootObject = A00400100100100100100101 /* Project object */;
+}

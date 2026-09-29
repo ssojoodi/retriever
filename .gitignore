@@ -1,0 +1,12 @@
+.build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+.DS_Store
+*.dmg
+release.env
+Config/LocalSigning.xcconfig
+artifacts/verification/
+docs/dmg-backups/
+dist/
