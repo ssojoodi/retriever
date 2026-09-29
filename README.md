@@ -15,7 +15,7 @@ Xcode is the authoritative build: open `Retriever.xcodeproj`, select the shared 
 
 Current workflow: connect with existing SSH keys/agent to a host already trusted in your SSH known-hosts file, browse folders, and download selected regular files. Double-click folders to open them; use Up to return, Refresh to reload, and Download (⌘D) to choose a local destination. Existing files are preserved: choose a new filename. Cancel disconnects and removes partial output. A server that stops sending or accepting data times out after 30 seconds. Closing or quitting during work offers cancellation and completes after cleanup. Password and first-use host trust prompts are not implemented yet.
 
-The native browser is wired to the tested SFTP core; authenticated SSH through the UI still needs end-to-end verification. App icon assets and authenticated workflow checks remain pending. `make check-windows` requires a logged-in GUI session and verifies initial action states, active-window routing, connection-sheet text focus/cancellation, minimum-size resize, idle close and controller release. It is separate from the core tests.
+The native browser is wired to the tested SFTP core; authenticated SSH through the UI still needs end-to-end verification. Authenticated workflow checks remain pending. `make check-windows` requires a logged-in GUI session and verifies initial action states, active-window routing, connection-sheet text focus/cancellation, minimum-size resize, idle close and controller release. It is separate from the core tests.
 
 `Sources/RetrieverApp` contains AppKit UI, `Sources/RetrieverCore` contains testable behavior, and `Tests/RetrieverCoreTests` contains hostless XCTest tests. Plans and evidence notes are tracked under `docs/`; screenshot artifacts are ignored under `artifacts/verification/`. No connection details or credentials are persisted. Closing the last window quits.
 
@@ -24,3 +24,5 @@ Development is unsigned. Before distribution, copy `Config/LocalSigning.example.
 No license has been selected.
 
 The SFTP core uses `/usr/bin/ssh` with existing keys/agent and strict known-host verification. No remote shell commands are constructed. Core integration tests launch `/usr/libexec/sftp-server` locally against temporary fixtures; they need no network or server credentials. Downloads preserve existing destination files. Interactive authentication and detailed SSH error diagnostics remain pending.
+
+Icon artwork is editable in `Brand/RenderIcon.swift`. Run `make assets` to regenerate all ten macOS icon slots (16 through 1024 pixels). Generated PNGs are tracked, so fresh checkouts build directly in Xcode without first running the renderer.

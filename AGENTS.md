@@ -31,3 +31,6 @@ Shared version and signing settings live in `Config/Signing.xcconfig`. Local cre
 
 ## SFTP core
 `SFTPPacket.swift` implements bounded SFTP v3 decoding; `SFTPSession.swift` owns a synchronous process stream and must be used on one dedicated worker, never the main thread. Production uses system SSH with strict known-host verification and batch key/agent authentication. Test injection launches local sftp-server. Remote filenames retain raw bytes. Download publication uses a sibling temporary file and a non-replacing hard link. `SFTPBrowser` owns the session on an actor with a dedicated Dispatch executor. UI operations pass a lock-protected cancellation signal; reads and writes poll every 100 ms and have a 30-second idle timeout. Cancelling disconnects the session. Interactive authentication and detailed SSH error diagnostics remain pending.
+
+## Brand assets
+`Brand/RenderIcon.swift` is the editable AppKit vector icon source. `make assets` regenerates all ten tracked PNG slots and catalog metadata deterministically. Ordinary Xcode and Make builds consume tracked assets.
