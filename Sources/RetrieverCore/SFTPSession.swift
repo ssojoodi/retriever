@@ -151,11 +151,12 @@ public final class SFTPSession {
         let handle = try response.bytes()
         defer { try? closeHandle(handle) }
         let temporary = destination.deletingLastPathComponent().appendingPathComponent(".retriever-\(UUID().uuidString).partial")
-        guard FileManager.default.createFile(atPath: temporary.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
-            throw CocoaError(.fileWriteUnknown)
+        let descriptor = temporary.withUnsafeFileSystemRepresentation { path in
+            Darwin.open(path!, O_WRONLY | O_CREAT | O_EXCL, mode_t(0o600))
         }
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { try? FileManager.default.removeItem(at: temporary) }
-        let file = try FileHandle(forWritingTo: temporary)
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? file.close() }
         var offset: UInt64 = 0
         while true {
@@ -174,8 +175,17 @@ public final class SFTPSession {
         try cancellation.check()
         try file.synchronize()
         try file.close()
-        // link creates the destination atomically and fails if it already exists.
-        try FileManager.default.linkItem(at: temporary, to: destination)
+        // Exclusive rename preserves a destination that appeared during transfer,
+        // including a dangling symlink, without requiring hard-link support.
+        let published = temporary.withUnsafeFileSystemRepresentation { source in
+            destination.withUnsafeFileSystemRepresentation { target in
+                renamex_np(source!, target!, UInt32(RENAME_EXCL))
+            }
+        }
+        guard published == 0 else {
+            if errno == EEXIST { throw SFTPError.destinationExists }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
         progress(offset)
     }
 

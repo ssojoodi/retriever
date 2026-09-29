@@ -176,6 +176,46 @@ final class SFTPTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: completed), data)
     }
 
+    func testDestinationCreatedDuringDownloadIsPreserved() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let source = fixture.appendingPathComponent("source")
+        try Data(repeating: 1, count: 100_000).write(to: source)
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { session.disconnect() }
+        let destination = fixture.appendingPathComponent("destination")
+        let original = Data("Created by another application".utf8)
+        var created = false
+        XCTAssertThrowsError(try session.download(Data(source.path.utf8), to: destination) { _ in
+            if !created {
+                do { try original.write(to: destination); created = true }
+                catch { XCTFail("Fixture write failed: \(error)") }
+            }
+        }) { error in
+            XCTAssertEqual(error as? SFTPError, .destinationExists)
+        }
+        XCTAssertTrue(created)
+        XCTAssertEqual(try Data(contentsOf: destination), original)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: fixture.path).contains { $0.hasSuffix(".partial") })
+    }
+
+    func testDanglingDestinationSymlinkIsPreserved() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let source = fixture.appendingPathComponent("source")
+        try Data("download".utf8).write(to: source)
+        let destination = fixture.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(atPath: destination.path, withDestinationPath: "missing-target")
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { session.disconnect() }
+        XCTAssertThrowsError(try session.download(Data(source.path.utf8), to: destination)) { error in
+            XCTAssertEqual(error as? SFTPError, .destinationExists)
+        }
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: destination.path), "missing-target")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.appendingPathComponent("missing-target").path))
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: fixture.path).contains { $0.hasSuffix(".partial") })
+    }
+
     private func makeFixture() throws -> URL {
         let result = FileManager.default.temporaryDirectory.appendingPathComponent("retriever-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: result, withIntermediateDirectories: false)
