@@ -14,9 +14,16 @@ os.chdir(repo)
 products = (Path(sys.argv[1] if len(sys.argv) > 1 else '.build/DerivedData') / 'Build/Products/Debug').resolve()
 checks = repo / '.build/checks'
 checks.mkdir(parents=True, exist_ok=True)
+gui = '--gui' in sys.argv
+runner = 'BrowserChecks' if gui else 'SSHChecks'
+sources = ['Tests/RetrieverSSHChecks/SSHChecks.swift']
+if gui:
+    sources = ['Sources/RetrieverApp/AppDelegate.swift', 'Sources/RetrieverApp/AppMenu.swift',
+               'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
+               'Tests/RetrieverAppChecks/BrowserChecks.swift']
 subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-F', str(products),
-                '-framework', 'RetrieverCore', '-Xlinker', '-rpath', '-Xlinker', str(products),
-                'Tests/RetrieverSSHChecks/SSHChecks.swift', '-o', str(checks / 'SSHChecks')], check=True)
+                '-framework', 'RetrieverCore', '-framework', 'AppKit', '-Xlinker', '-rpath', '-Xlinker', str(products)] +
+               sources + ['-o', str(checks / runner)], check=True)
 with tempfile.TemporaryDirectory(prefix='ssh-', dir=checks) as temporary:
     root = Path(temporary)
     for name in ('host_key', 'client_key'):
@@ -33,6 +40,8 @@ with tempfile.TemporaryDirectory(prefix='ssh-', dir=checks) as temporary:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
     (root / 'files').mkdir()
+    if gui:
+        (root / 'files/Empty folder').mkdir()
     (root / 'files/payload.bin').write_bytes(bytes(range(256)) * 513)
     for name, key in [('known_hosts', 'host_key'), ('changed_hosts', 'client_key')]:
         public = (root / (key + '.pub')).read_text().split()
@@ -70,7 +79,7 @@ Subsystem sftp internal-sftp
                         raise RuntimeError('Fixture did not start')
                     time.sleep(0.05)
             environment = dict(os.environ, LLVM_PROFILE_FILE=str(checks / 'ssh-%p.profraw'))
-            subprocess.run([str(checks / 'SSHChecks'), str(root), str(port), getpass.getuser()], env=environment, check=True, timeout=45)
+            subprocess.run([str(checks / runner), str(root), str(port), getpass.getuser()], env=environment, check=True, timeout=45)
         finally:
             server.terminate()
             try:

@@ -3,7 +3,7 @@ import RetrieverCore
 
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSMenuItemValidation {
-    private let browser = SFTPBrowser(askpass: Bundle.main.executableURL)
+    private let browser: SFTPBrowser
     private let status = NSTextField(labelWithString: "Not connected")
     private let pathField = NSTextField(labelWithString: "")
     private let table = NSTableView()
@@ -15,7 +15,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
     private(set) var busy = false
     private var afterCleanup: (@MainActor () -> Void)?
 
-    init() {
+    init(browser: SFTPBrowser = SFTPBrowser(askpass: Bundle.main.executableURL)) {
+        self.browser = browser
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Retriever"
         window.minSize = NSSize(width: 580, height: 360)
@@ -198,7 +199,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         else { downloadSelected(sender) }
     }
     @objc func downloadSelected(_ sender: Any?) {
-        guard enabled(#selector(downloadSelected(_:))), let selected, let directory, let window else { return }
+        guard enabled(#selector(downloadSelected(_:))), let selected, let window else { return }
         let panel = NSSavePanel()
         panel.title = "Download File"
         panel.prompt = "Download"
@@ -206,16 +207,20 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         panel.canCreateDirectories = true
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let destination = panel.url, let self else { return }
-            self.runOperation("Downloading \(selected.name)…") { [self] signal in
-                try await browser.download(SFTPSession.appending(selected.nameBytes, to: directory.path), to: destination, cancellation: signal) { [weak self] bytes in
-                    Task { @MainActor [weak self] in
-                        guard let self, busy, cancellation === signal else { return }
-                        let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
-                        status.stringValue = "Downloading \(selected.name) — \(count) received"
-                    }
+            self.retrieveSelection(to: destination)
+        }
+    }
+    func retrieveSelection(to destination: URL) {
+        guard enabled(#selector(downloadSelected(_:))), let selected, let directory else { return }
+        runOperation("Downloading \(selected.name)…") { [self] signal in
+            try await browser.download(SFTPSession.appending(selected.nameBytes, to: directory.path), to: destination, cancellation: signal) { [weak self] bytes in
+                Task { @MainActor [weak self] in
+                    guard let self, busy, cancellation === signal else { return }
+                    let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+                    status.stringValue = "Downloading \(selected.name) — \(count) received"
                 }
-                status.stringValue = "Downloaded to \(destination.path)"
             }
+            status.stringValue = "Downloaded to \(destination.path)"
         }
     }
     @objc func cancel(_ sender: Any?) {

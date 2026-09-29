@@ -9,6 +9,7 @@ make build
 make test
 make check-windows
 make check-ssh
+make check-browser
 make run
 ```
 
@@ -29,3 +30,5 @@ The SFTP core uses `/usr/bin/ssh`; new hosts require explicit confirmation and c
 Icon artwork is editable in `Brand/RenderIcon.swift`. Run `make assets` to regenerate all ten macOS icon slots (16 through 1024 pixels). Generated PNGs are tracked, so fresh checkouts build directly in Xcode without first running the renderer.
 
 `make check-ssh` verifies real authenticated SSH transfers and rejection of unknown/changed host keys and unauthorized client keys. It uses installed macOS sshd, Python 3 and disposable test keys on a loopback-only port. It does not alter your SSH configuration. The fixture server and temporary credentials are cleaned up on exit. This transport check is separate from authenticated GUI verification.
+
+`make check-browser` runs the production window controller against the same authenticated SSH fixture in a GUI session. It verifies connection fields, listing, folder/Up navigation, native save cancellation, an exact selected-file download to an explicit destination, and disconnect. It captures `artifacts/verification/authenticated-browser-display.png`. Native save-panel confirmation remains a separate manual check: this macOS version does not implement `NSSavePanel.ok(_:)` for automation. The runner is not the packaged app.

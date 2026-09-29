@@ -15,7 +15,7 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 
 ## Layout and commands
 Xcode is authoritative. `Sources/RetrieverApp` owns UI; `Sources/RetrieverCore` owns testable connection and transfer behavior; `Tests/RetrieverCoreTests` owns XCTest cases. Explicit project membership is required for new files.
-`make build`, `make test`, `make check-windows`, `make check-ssh`, `make run`, `make assets`, `make paths`, `make help`.
+`make build`, `make test`, `make check-windows`, `make check-ssh`, `make check-browser`, `make run`, `make assets`, `make paths`, `make help`.
 Generated output: `.build/`; inspected screenshots: `artifacts/verification/`; iteration plans: `docs/`.
 Shared version and signing settings live in `Config/Signing.xcconfig`. Local credentials remain ignored. Unsigned development works without release credentials. Release pipeline is a later milestone and must not report success until signing/notarization and DMG validation pass.
 
@@ -36,3 +36,5 @@ Shared version and signing settings live in `Config/Signing.xcconfig`. Local cre
 `Brand/RenderIcon.swift` is the editable AppKit vector icon source. `make assets` regenerates all ten tracked PNG slots and catalog metadata deterministically. Ordinary Xcode and Make builds consume tracked assets.
 
 `make check-ssh` builds and tests the actual SSH transport against a disposable loopback sshd. It uses the same `SFTPSession.sshArguments` as production, with test-only identity and known-host paths. No personal/server credentials or SSH configuration changes are needed. Keep network integration separate from core XCTest.
+
+`make check-browser` compiles production AppKit controller sources and uses an internal session factory to isolate fixture credentials. It verifies native connection/navigation and selected-file retrieval with an explicit destination; it does not prove native save confirmation or packaged-app authentication. `retrieveSelection(to:)` is shared by the save callback and the integration runner.

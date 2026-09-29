@@ -28,15 +28,27 @@ public actor SFTPBrowser {
     private nonisolated let executor = SFTPExecutor()
     public nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
     private var session: SFTPSession?
-    private let askpass: URL?
-    public init(askpass: URL? = nil) { self.askpass = askpass }
+    private let makeSession: @Sendable (ConnectionSettings, SFTPCancellation) throws -> SFTPSession
+    private let initialPath: Data
+    public init(askpass: URL? = nil) {
+        initialPath = Data(".".utf8)
+        makeSession = { settings, cancellation in
+            try SFTPSession(settings: settings, cancellation: cancellation, askpass: askpass)
+        }
+    }
+
+    // Available to @testable integration runners; production keeps standard SSH setup.
+    init(initialPath: Data, makeSession: @escaping @Sendable (ConnectionSettings, SFTPCancellation) throws -> SFTPSession) {
+        self.initialPath = initialPath
+        self.makeSession = makeSession
+    }
 
     public func connect(_ settings: ConnectionSettings, cancellation: SFTPCancellation) throws -> RemoteDirectory {
         disconnect()
         do {
-            let connection = try SFTPSession(settings: settings, cancellation: cancellation, askpass: askpass)
+            let connection = try makeSession(settings, cancellation)
             session = connection
-            return try directory(Data(".".utf8), cancellation: cancellation)
+            return try directory(initialPath, cancellation: cancellation)
         } catch {
             disconnect()
             throw error
