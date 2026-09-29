@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// A synchronous session. Own and call it on a dedicated serial worker, never the UI thread.
 /// SSH owns encryption, authentication and host-key verification.
@@ -8,19 +9,24 @@ public final class SFTPSession {
     private let output = Pipe()
     private var requestID: UInt32 = 0
     private var connected = false
+    var cancellation: SFTPCancellation
+    private let idleTimeout: TimeInterval
     private static let maximumPacket = 4 * 1024 * 1024
 
-    public convenience init(settings: ConnectionSettings) throws {
+    public convenience init(settings: ConnectionSettings, cancellation: SFTPCancellation = SFTPCancellation()) throws {
         try self.init(executable: URL(fileURLWithPath: "/usr/bin/ssh"), arguments: [
             "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15",
             "-o", "ServerAliveCountMax=2", "-o", "ClearAllForwardings=yes",
             "-p", String(settings.port), "-l", settings.username, "-s", settings.host, "sftp"
-        ])
+        ], cancellation: cancellation)
     }
 
     // Internal injection permits real protocol integration tests without SSH credentials.
-    init(executable: URL, arguments: [String]) throws {
+    init(executable: URL, arguments: [String], cancellation: SFTPCancellation = SFTPCancellation(), idleTimeout: TimeInterval = 30) throws {
+        self.cancellation = cancellation
+        self.idleTimeout = idleTimeout
+        try cancellation.check()
         process.executableURL = executable
         process.arguments = arguments
         process.standardInput = input
@@ -130,6 +136,7 @@ public final class SFTPSession {
             try file.write(contentsOf: bytes)
             offset += UInt64(bytes.count)
         }
+        try cancellation.check()
         try file.synchronize()
         try file.close()
         // link creates the destination atomically and fails if it already exists.
@@ -174,6 +181,7 @@ public final class SFTPSession {
     }
 
     private func send(_ packet: SFTPWriter) throws {
+        try cancellation.check()
         try input.fileHandleForWriting.write(contentsOf: packet.framed())
     }
 
@@ -186,11 +194,23 @@ public final class SFTPSession {
 
     private func readExactly(_ count: Int) throws -> Data {
         var result = Data()
+        var lastRead = ProcessInfo.processInfo.systemUptime
+        let descriptor = output.fileHandleForReading.fileDescriptor
         while result.count < count {
-            guard let chunk = try output.fileHandleForReading.read(upToCount: count - result.count), !chunk.isEmpty else {
+            try cancellation.check()
+            guard ProcessInfo.processInfo.systemUptime - lastRead < idleTimeout else { throw SFTPError.timedOut }
+            var descriptorState = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&descriptorState, 1, 100)
+            if ready < 0 {
+                if errno == EINTR { continue }
                 throw SFTPError.disconnected
             }
-            result.append(chunk)
+            if ready == 0 { continue }
+            var buffer = [UInt8](repeating: 0, count: min(count - result.count, 65536))
+            let received = Darwin.read(descriptor, &buffer, buffer.count)
+            guard received > 0 else { throw SFTPError.disconnected }
+            result.append(contentsOf: buffer.prefix(received))
+            lastRead = ProcessInfo.processInfo.systemUptime
         }
         return result
     }

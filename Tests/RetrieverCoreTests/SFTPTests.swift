@@ -82,6 +82,24 @@ final class SFTPTests: XCTestCase {
         }
     }
 
+    func testCancelledHandshakeDoesNotWaitForServer() {
+        let cancellation = SFTPCancellation()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { cancellation.cancel() }
+        let started = Date()
+        XCTAssertThrowsError(try SFTPSession(executable: URL(fileURLWithPath: "/bin/sleep"), arguments: ["5"], cancellation: cancellation)) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+    }
+
+    func testStalledHandshakeTimesOut() {
+        let started = Date()
+        XCTAssertThrowsError(try SFTPSession(executable: URL(fileURLWithPath: "/bin/sleep"), arguments: ["5"], idleTimeout: 0.2)) { error in
+            XCTAssertEqual(error as? SFTPError, .timedOut)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+    }
+
     private func makeFixture() throws -> URL {
         let result = FileManager.default.temporaryDirectory.appendingPathComponent("retriever-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: result, withIntermediateDirectories: false)

@@ -8,5 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        controller?.confirmTermination() == false ? .terminateCancel : .terminateNow
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
