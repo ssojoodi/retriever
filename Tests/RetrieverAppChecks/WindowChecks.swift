@@ -16,6 +16,24 @@ struct WindowChecks {
         precondition(!secretConfirmation && secretField != nil)
         precondition(password.accessoryView is NSSecureTextField, "Secrets must use a secure field")
 
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        precondition(app.sendAction(#selector(AppDelegate.showRetrieverHelp(_:)), to: nil, from: nil), "Help must route to the application delegate")
+        pump()
+        guard let help = app.windows.first(where: { $0.title == "Retriever Help" }) else { fatalError("Missing Help panel") }
+        precondition(help.isVisible)
+        delegate.showRetrieverHelp(nil)
+        precondition(app.windows.filter { $0.title == "Retriever Help" }.count == 1, "Help must reuse its panel")
+        let screenshot = Process()
+        screenshot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        screenshot.arguments = ["-x", "-D", "1", "artifacts/verification/help-window.png"]
+        try! FileManager.default.createDirectory(atPath: "artifacts/verification", withIntermediateDirectories: true)
+        try! screenshot.run()
+        screenshot.waitUntilExit()
+        precondition(screenshot.terminationStatus == 0)
+        help.performClose(nil)
+        precondition(!help.isVisible)
+        app.delegate = nil
         weak var releasedController: MainWindowController?
         autoreleasepool {
             var controller: MainWindowController? = MainWindowController()

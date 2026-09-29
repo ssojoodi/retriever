@@ -7,7 +7,7 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 - Primary workflow: connect to an SFTP server, browse folders, and download a selected file.
 - First usable slice: one connection, directory navigation, one download with cancellation and visible errors.
 - Bundle identifiers: `ca.sahand.Retriever`, `ca.sahand.RetrieverCore`, `ca.sahand.RetrieverCoreTests`. Inferred personal namespace; confirm before distribution.
-- One retained window; closing the last window quits. Follow system light/dark appearance.
+- One retained browser window, plus a reusable auxiliary Help panel; closing the last window quits. Follow system light/dark appearance.
 - Connection and selection state are transient initially. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
 - Direct Developer ID distribution, separately signed and notarized DMG. Universal arm64/x86_64 Release compilation and binary slices verified. Intel runtime remains untested.
 - Initial non-goals: FTP, uploads, remote deletion, synchronization, tabs, bookmarks, website, App Store.

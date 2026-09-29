@@ -14,7 +14,15 @@ enum AppMenu {
         let app = submenu("Retriever")
         app.addItem(withTitle: "About Retriever", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         app.addItem(.separator())
+        let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
+        let services = NSMenu(title: "Services")
+        servicesItem.submenu = services
+        app.addItem(servicesItem)
+        NSApp.servicesMenu = services
+        app.addItem(.separator())
         app.addItem(withTitle: "Hide Retriever", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = app.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
         app.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "Quit Retriever", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -35,6 +43,9 @@ enum AppMenu {
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         NSApp.windowsMenu = window
+        let help = submenu("Help")
+        help.addItem(withTitle: "Retriever Help", action: #selector(AppDelegate.showRetrieverHelp(_:)), keyEquivalent: "?")
+        NSApp.helpMenu = help
         NSApp.mainMenu = main
     }
 }

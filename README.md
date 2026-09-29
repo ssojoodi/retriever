@@ -34,3 +34,5 @@ Icon artwork is editable in `Brand/RenderIcon.swift`. Run `make assets` to regen
 `make check-browser` runs the production window controller against the same authenticated SSH fixture in a GUI session. It verifies connection fields, listing, folder/Up navigation, native save cancellation, an exact selected-file download to an explicit destination, and disconnect. It captures `artifacts/verification/authenticated-browser-display.png`. Native save-panel confirmation remains a separate manual check: this macOS version does not implement `NSSavePanel.ok(_:)` for automation. The runner is not the packaged app.
 
 `make build-universal` builds unsigned Release into `.build/ReleaseVerification` and verifies Apple silicon and Intel slices in both app and framework. It is not a signed or notarized release. Both architectures compile with a macOS 14 minimum; Intel runtime has not been tested. Current acceptance evidence and unfinished gates are listed in `docs/bootstrap-acceptance.md`.
+
+Use Help → Retriever Help for offline connection, trust, download and cancellation instructions and keyboard shortcuts. The Help panel is reusable and does not interrupt transfers.

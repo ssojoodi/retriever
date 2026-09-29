@@ -8,7 +8,7 @@ Current audit: 2026-09-28. This file records evidence and open gates; it is not 
 | Toolchain inspection | Xcode 26.6, Swift 6.3.3, macOS 26.6.2 arm64 recorded in foundation plan | None for local development |
 | Independent checkout | Fresh archive of committed source passed `make build` without prior products or signing configuration | None for the verified commit |
 | Authoritative Xcode targets and scheme | App, embedded framework and hostless XCTest bundle; plist lint and shared scheme verified | None known |
-| Native shell and identity | Running built-app screenshots; icon assets and bundle metadata verified | About panel visual check, Help menu and remaining keyboard/overflow checks |
+| Native shell and identity | Running built-app screenshots; icon assets and bundle metadata verified | About panel visual check and remaining keyboard/overflow checks; Help routing/reuse/close and screenshot verified |
 | Actual SFTP workflow | Real authenticated SSH fixture and native controller checks | Complete packaged-app connection-to-save flow; native save confirmation remains unverified |
 | Trust and credentials | Native prompt construction checks; built helper preview; scripted askpass encrypted-key and trust tests | Native helper response/cancellation/lifetime integration; external password server not tested |
 | Transfer integrity | 21 core tests, exact bytes, mid-transfer cancellation, destination-race and symlink preservation | External-volume runtime coverage; more transfer/error UX checks |
