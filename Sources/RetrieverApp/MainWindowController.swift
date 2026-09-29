@@ -207,7 +207,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let destination = panel.url, let self else { return }
             self.runOperation("Downloading \(selected.name)…") { [self] signal in
-                try await browser.download(SFTPSession.appending(selected.nameBytes, to: directory.path), to: destination, cancellation: signal)
+                try await browser.download(SFTPSession.appending(selected.nameBytes, to: directory.path), to: destination, cancellation: signal) { [weak self] bytes in
+                    Task { @MainActor [weak self] in
+                        guard let self, busy, cancellation === signal else { return }
+                        let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+                        status.stringValue = "Downloading \(selected.name) — \(count) received"
+                    }
+                }
                 status.stringValue = "Downloaded to \(destination.path)"
             }
         }

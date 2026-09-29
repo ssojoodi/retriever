@@ -145,6 +145,37 @@ final class SFTPTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 3)
     }
 
+    func testDownloadReportsActualBytesAndCancellationRemovesPartialFile() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let source = fixture.appendingPathComponent("source.bin")
+        let data = Data(repeating: 42, count: 150_000)
+        try data.write(to: source)
+        let signal = SFTPCancellation()
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [], cancellation: signal)
+        defer { session.disconnect() }
+        var counts: [UInt64] = []
+        let completed = fixture.appendingPathComponent("completed.bin")
+        try session.download(Data(source.path.utf8), to: completed) { counts.append($0) }
+        XCTAssertEqual(counts.last, UInt64(data.count))
+        XCTAssertEqual(counts, counts.sorted())
+        XCTAssertGreaterThan(counts.count, 2)
+        XCTAssertEqual(try Data(contentsOf: completed), data)
+        let cancelled = fixture.appendingPathComponent("cancelled.bin")
+        var receivedBeforeCancellation: UInt64 = 0
+        XCTAssertThrowsError(try session.download(Data(source.path.utf8), to: cancelled) { bytes in
+            receivedBeforeCancellation = bytes
+            signal.cancel()
+        }) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertGreaterThan(receivedBeforeCancellation, 0)
+        XCTAssertLessThan(receivedBeforeCancellation, UInt64(data.count))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cancelled.path))
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: fixture.path).contains { $0.hasSuffix(".partial") })
+        XCTAssertEqual(try Data(contentsOf: completed), data)
+    }
+
     private func makeFixture() throws -> URL {
         let result = FileManager.default.temporaryDirectory.appendingPathComponent("retriever-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: result, withIntermediateDirectories: false)

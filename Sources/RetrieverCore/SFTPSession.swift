@@ -141,7 +141,7 @@ public final class SFTPSession {
 
     /// Writes a sibling temporary file, then publishes without replacing an existing destination.
     /// Failed reads leave the destination untouched and remove the temporary file.
-    public func download(_ path: Data, to destination: URL) throws {
+    public func download(_ path: Data, to destination: URL, progress: (UInt64) -> Void = { _ in }) throws {
         guard !FileManager.default.fileExists(atPath: destination.path) else { throw SFTPError.destinationExists }
         var payload = SFTPWriter()
         payload.bytes(path)
@@ -169,12 +169,14 @@ public final class SFTPSession {
             guard !bytes.isEmpty, bytes.count <= 32768, response.remaining == 0 else { throw SFTPError.malformedPacket }
             try file.write(contentsOf: bytes)
             offset += UInt64(bytes.count)
+            progress(offset)
         }
         try cancellation.check()
         try file.synchronize()
         try file.close()
         // link creates the destination atomically and fails if it already exists.
         try FileManager.default.linkItem(at: temporary, to: destination)
+        progress(offset)
     }
 
     public static func appending(_ name: Data, to directory: Data) -> Data {

@@ -56,10 +56,22 @@ public actor SFTPBrowser {
         }
     }
 
-    public func download(_ path: Data, to destination: URL, cancellation: SFTPCancellation) throws {
+    public func download(_ path: Data, to destination: URL, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws {
         guard let session else { throw SFTPError.disconnected }
         session.cancellation = cancellation
-        do { try session.download(path, to: destination) }
+        do {
+            var lastUpdate: TimeInterval = 0
+            var received: UInt64 = 0
+            try session.download(path, to: destination) { bytes in
+                received = bytes
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - lastUpdate >= 0.1 {
+                    progress(bytes)
+                    lastUpdate = now
+                }
+            }
+            progress(received)
+        }
         catch { disconnect(); throw error }
     }
 
