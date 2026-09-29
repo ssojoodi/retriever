@@ -28,3 +28,6 @@ Shared version and signing settings live in `Config/Signing.xcconfig`. Local cre
 - Keep credentials local, plans tracked, generated output isolated.
 - Keep commands and this memory current as architecture changes.
 - Create a new timestamped plan for every iteration. Commit finished milestones with short messages.
+
+## SFTP core
+`SFTPPacket.swift` implements bounded SFTP v3 decoding; `SFTPSession.swift` owns a synchronous process stream and must be used on one dedicated worker, never the main thread. Production uses system SSH with strict known-host verification and batch key/agent authentication. Test injection launches local sftp-server. Remote filenames retain raw bytes. Download publication uses a sibling temporary file and a non-replacing hard link. UI transport integration, cancellation/timeouts and interactive authentication remain pending.
