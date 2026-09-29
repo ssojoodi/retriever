@@ -114,12 +114,8 @@ def main():
     run('xcrun', 'stapler', 'staple', app)
     run('xcrun', 'stapler', 'validate', app)
     run('spctl', '--assess', '--type', 'execute', '--verbose=2', app)
-    image_root = staging / 'image'
-    image_root.mkdir()
-    run('ditto', app, image_root / 'Retriever.app')
-    (image_root / 'Applications').symlink_to('/Applications')
     dmg = staging / f'Retriever-{version}-{build}.dmg'
-    run('hdiutil', 'create', '-volname', 'Retriever', '-srcfolder', image_root, '-format', 'UDZO', dmg)
+    run(sys.executable, 'scripts/create_dmg.py', app, dmg, staging / 'dmg-layout')
     run('codesign', '--force', '--timestamp', '--sign', args.identity, dmg)
     notarize(dmg, args.profile, staging, 'dmg')
     run('xcrun', 'stapler', 'staple', dmg)
