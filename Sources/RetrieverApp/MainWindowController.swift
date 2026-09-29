@@ -157,6 +157,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
             catch {
                 directory = nil
                 table.reloadData()
+                window?.title = "Retriever"
                 if error is CancellationError { status.stringValue = "Cancelled. Disconnected." }
                 else {
                     status.stringValue = "Disconnected"

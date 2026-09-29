@@ -64,10 +64,25 @@ struct BrowserChecks {
         let actual = try Data(contentsOf: destination)
         let expected = try Data(contentsOf: root.appendingPathComponent("files/payload.bin"))
         precondition(actual == expected, "UI download must preserve exact bytes")
+        // Repeating the download must report the occupied destination, preserve
+        // its bytes, and expose the disconnected state consistently.
+        controller.retrieveSelection(to: destination)
+        waitUntil("Existing destination error") { !controller.busy && window.attachedSheet != nil }
+        let preserved = try Data(contentsOf: destination)
+        precondition(preserved == expected, "Failed download changed existing file")
+        precondition(table.numberOfRows == 0 && window.title == "Retriever", "Failure must clear remote identity and listing")
+        let download = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "download" }!
+        let open = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "connect" }!
+        let errorSheet = window.attachedSheet!
+        guard let dismiss = descendants(errorSheet.contentView!).compactMap({ $0 as? NSButton }).first(where: { $0.title == "OK" }) else { fatalError("Missing error dismissal") }
+        dismiss.performClick(nil)
+        waitUntil("Error dismissal") { window.attachedSheet == nil }
+        pump()
+        precondition(!download.isEnabled && open.isEnabled, "Failure must allow reconnect and disable download")
         controller.disconnect(nil)
         waitUntil("Disconnect") { !controller.busy && table.numberOfRows == 0 }
         window.performClose(nil)
-        print("PASS: authenticated native connection sheet, file table, folder/Up navigation, save cancellation, explicit-destination exact download and disconnect")
+        print("PASS: authenticated native connection sheet, navigation, save cancellation, exact download, existing-file preservation, error state and disconnect")
     }
 
     private static func descendants(_ view: NSView) -> [NSView] {
