@@ -31,14 +31,15 @@ def main():
     checks = repo / '.build/checks'
     checks.mkdir(parents=True, exist_ok=True)
     # Keep the agent socket path short enough for sockaddr_un on macOS.
-    with tempfile.TemporaryDirectory(prefix='retriever-manual-', dir='/tmp') as temporary:
+    with tempfile.TemporaryDirectory(prefix='manual-', dir=checks) as temporary, \
+            tempfile.TemporaryDirectory(prefix='retriever-agent-', dir='/tmp') as agent_directory:
         root = Path(temporary)
         server = agent = application = None
         try:
             for name in ('host_key', 'client_key'):
                 subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(root / name)], check=True)
             (root / 'authorized_keys').write_text((root / 'client_key.pub').read_text())
-            files = root / 'files'
+            files = Path(agent_directory) / 'files'
             files.mkdir()
             (files / 'Empty folder').mkdir()
             (files / 'retriever-test.txt').write_text('Retrieved successfully with Retriever.\n')
@@ -58,11 +59,11 @@ UsePAM no
 DisableForwarding yes
 PermitTTY no
 PermitUserRC no
-ForceCommand internal-sftp -R -d "{files}"
+ForceCommand internal-sftp -R -d {files}
 Subsystem sftp internal-sftp
 ''')
             subprocess.run(['/usr/sbin/sshd', '-t', '-f', str(config)], check=True)
-            environment = dict(os.environ, SSH_AUTH_SOCK=str(root / 'agent.sock'),
+            environment = dict(os.environ, SSH_AUTH_SOCK=str(Path(agent_directory) / 'agent.sock'),
                                LLVM_PROFILE_FILE=str(checks / 'manual-%p.profraw'))
             with (checks / 'manual-server.log').open('w') as server_log, (checks / 'manual-agent.log').open('w') as agent_log, (checks / 'manual-app.log').open('w') as app_log:
                 agent = subprocess.Popen(['/usr/bin/ssh-agent', '-D', '-a', environment['SSH_AUTH_SOCK']], stdout=agent_log, stderr=agent_log)
@@ -84,6 +85,17 @@ Subsystem sftp internal-sftp
                         if time.monotonic() > deadline:
                             raise RuntimeError('Test server did not start.')
                         time.sleep(0.05)
+                public_key = (root / 'host_key.pub').read_text().split()
+                known_hosts = root / 'preflight-known-hosts'
+                known_hosts.write_text(f'[127.0.0.1]:{port} {public_key[0]} {public_key[1]}\n')
+                listing = subprocess.run(
+                    ['/usr/bin/sftp', '-F', '/dev/null', '-o', 'BatchMode=yes',
+                     '-o', 'StrictHostKeyChecking=yes', '-o', f'UserKnownHostsFile={known_hosts}',
+                     '-P', str(port), f'{getpass.getuser()}@127.0.0.1'],
+                    input='ls\nquit\n', capture_output=True, text=True, env=environment,
+                    check=True, timeout=10).stdout
+                if 'retriever-test.txt' not in listing or 'Empty folder' not in listing:
+                    raise RuntimeError('Fixture preflight did not list the sample files.')
                 print(f'Server: 127.0.0.1\nUsername: {getpass.getuser()}\nPort: {port}', flush=True)
                 subprocess.run(['/usr/bin/ssh-keygen', '-lf', str(root / 'host_key.pub')], check=True)
                 print('Download retriever-test.txt. Expected text: Retrieved successfully with Retriever.\nQuit this Retriever instance to stop the fixture and remove temporary keys.', flush=True)
