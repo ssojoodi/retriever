@@ -10,7 +10,7 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 - One retained browser window, plus a reusable auxiliary Help panel; closing the last window quits. Follow system light/dark appearance.
 - Connection and selection state are transient initially. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
 - Direct Developer ID distribution, separately signed and notarized DMG. Universal arm64/x86_64 Release compilation and binary slices verified. Intel runtime remains untested.
-- Initial non-goals: FTP, uploads, remote deletion, synchronization, tabs, bookmarks, website, App Store.
+- Initial non-goals: FTP, uploads, remote deletion, synchronization, tabs, bookmarks, App Store. A static download website is now maintained in `web-page/`.
 - No license grant selected yet; do not copy a reference project's license.
 
 ## Layout and commands
@@ -38,3 +38,6 @@ Shared version and signing settings live in `Config/Signing.xcconfig`. Local cre
 `make check-ssh` builds and tests the actual SSH transport against a disposable loopback sshd. It uses the same `SFTPSession.sshArguments` as production, with test-only identity and known-host paths. No personal/server credentials or SSH configuration changes are needed. Keep network integration separate from core XCTest.
 
 `make check-browser` compiles production AppKit controller sources and uses an internal session factory to isolate fixture credentials. It verifies native connection/navigation and selected-file retrieval with an explicit destination; it does not prove native save confirmation or packaged-app authentication. `retrieveSelection(to:)` is shared by the save callback and the integration runner.
+
+## Website release handoff
+`make release` signs/notarizes and validates the app and DMG, requires the installed-copy verification, then publishes locally to `web-page/Retriever.dmg`, with checksum and release.json. Previous artifacts are backed up in ignored `docs/dmg-backups/`. The static website enables downloads only when generated release metadata and DMG are available. No website upload occurs. `python3 scripts/check_release_publication.py` tests output/backups without credentials.

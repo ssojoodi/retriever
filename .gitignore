@@ -10,3 +10,7 @@ Config/LocalSigning.xcconfig
 artifacts/verification/
 docs/dmg-backups/
 dist/
+
+web-page/Retriever.dmg.sha256
+web-page/release.json
+web-page/.release-*/

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Retriever — SFTP for macOS</title>
+  <meta name="description" content="Connect to your server, browse folders, and download files with Retriever, a simple native SFTP app for Mac.">
+  <meta property="og:title" content="Retriever — Go fetch your files.">
+  <meta property="og:description" content="A simple native SFTP browser for Mac. Connect, browse, download.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="preview.jpg">
+  <meta name="theme-color" content="#f6f1e8">
+  <link rel="icon" href="app-icon.png" type="image/png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="release.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="page-shell">
+    <nav class="topbar" aria-label="Main navigation">
+      <a class="brand" href="./"><img src="app-icon.png" width="512" height="512" alt=""><span>Retriever</span></a>
+      <a class="topbar-note" href="release-notes.html">Release notes ↗</a>
+    </nav>
+    <header class="hero" id="main">
+      <div class="hero-grid">
+        <div>
+          <p class="eyebrow">SFTP, made simple. For Mac.</p>
+          <h1>Go fetch<br>your files.</h1>
+          <p class="lede">Connect to your server, find what you need, and bring it home. Retriever is a small native app for browsing and downloading files over SFTP.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" data-download hidden download>Download for Mac ↓</a>
+            <span class="button button-pending" data-pending>Download coming soon</span>
+            <a class="button button-secondary" href="#how-it-works">How it works</a>
+            <span class="download-note">macOS 14 or later · Apple silicon and Intel</span>
+          </div>
+          <p class="release-status" data-release-status aria-live="polite">The first public download is being prepared.</p>
+          <noscript><p>Enable JavaScript to check download availability, or see the <a href="release-notes.html">release notes</a>.</p></noscript>
+        </div>
+        <figure class="hero-visual">
+          <img class="logo-showcase" src="app-icon.png" width="512" height="512" alt="Retriever’s golden folder mascot with floppy ears and a download-arrow nose.">
+          <figcaption class="preview-caption">A little less setup. A little more fetching.</figcaption>
+        </figure>
+      </div>
+    </header>
+  </div>
+  <main>
+    <section class="section-rule" aria-labelledby="features-title">
+      <div class="page-shell split">
+        <div><p class="eyebrow">Just the essentials</p><h2 id="features-title">Your server.<br>A familiar file browser.</h2><p class="body-copy">One connection, a clear file list, and a Download button. Built with native Mac controls that stay out of your way.</p></div>
+        <ul class="feature-list retriever-features">
+          <li><span class="feature-mark" aria-hidden="true">↗</span><div><strong>Connect with SSH</strong>Use your SSH keys, agent, or password. Check the server fingerprint before trusting a new connection.</div></li>
+          <li><span class="feature-mark" aria-hidden="true">▤</span><div><strong>Find your files</strong>Browse folders, go up a level, and refresh the listing. See file sizes and modification dates at a glance.</div></li>
+          <li><span class="feature-mark" aria-hidden="true">↓</span><div><strong>Bring a file home</strong>Choose where to save it with the macOS Save dialog. Cancel a transfer when you need to; partial downloads are cleaned up.</div></li>
+        </ul>
+      </div>
+    </section>
+    <section class="steps" id="how-it-works" aria-labelledby="steps-title">
+      <div class="page-shell"><p class="eyebrow">Three simple steps</p><h2 id="steps-title">From your server to your Mac.</h2>
+        <div class="step-grid">
+          <div class="step"><span>1</span><h3>Open a connection</h3><p>Enter your server, username, and SFTP port. Verify the server’s fingerprint when prompted.</p></div>
+          <div class="step"><span>2</span><h3>Browse to your file</h3><p>Open folders in the file list. Use Up to return to the parent folder.</p></div>
+          <div class="step"><span>3</span><h3>Download</h3><p>Select a file, choose Download, and pick a new local filename. Existing files are preserved.</p></div>
+        </div>
+      </div>
+    </section>
+    <section id="install" aria-labelledby="install-title"><div class="page-shell split">
+      <div><p class="eyebrow">Install</p><h2 id="install-title">Right at home on your Mac.</h2></div>
+      <div class="body-copy"><p>When the download is available, open the DMG and drag Retriever to Applications. Launch Retriever and choose Open Connection.</p><p>Requires macOS 14 or later and an SFTP server. This first version downloads individual files; FTP, uploads, and folder downloads are not supported.</p></div>
+    </div></section>
+    <section class="section-rule"><div class="page-shell download-panel">
+      <img src="app-icon.png" width="512" height="512" alt="">
+      <div><h2>Ready to retrieve?</h2><p data-release-status>The first public download is being prepared.</p><a data-checksum hidden href="Retriever.dmg.sha256">SHA-256 checksum</a></div>
+      <a class="button button-primary" data-download hidden download>Download for Mac ↓</a><span class="button button-pending" data-pending>Coming soon</span>
+    </div></section>
+  </main>
+  <footer><div class="page-shell"><span>© 2026 Sahand Sojoodi</span><a href="release-notes.html">Release notes</a><a href="https://sojoodi.com/">sojoodi.com</a></div></footer>
+</body>
+</html>

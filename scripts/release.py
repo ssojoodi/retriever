@@ -42,6 +42,34 @@ def notarize(path, profile, staging, label):
         raise RuntimeError(f'{label} notarization did not return Accepted. See {report}')
 
 
+def publish_release(repo, dmg, checksum, version, build):
+    """Publish a validated candidate locally; keep backups outside the website."""
+    website = repo / 'web-page'
+    website.mkdir(exist_ok=True)
+    target = website / 'Retriever.dmg'
+    if target.exists():
+        backups = repo / 'docs/dmg-backups'
+        backups.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S-%f')
+        shutil.copy2(target, backups / f'Retriever-{stamp}.dmg')
+        for name in ('Retriever.dmg.sha256', 'release.json'):
+            if (website / name).is_file():
+                shutil.copy2(website / name, backups / f'{stamp}-{name}')
+    with tempfile.TemporaryDirectory(prefix='.release-', dir=website) as temporary:
+        prepared = Path(temporary)
+        shutil.copy2(dmg, prepared / target.name)
+        (prepared / 'Retriever.dmg.sha256').write_text(checksum + '  Retriever.dmg\n')
+        (prepared / 'release.json').write_text(json.dumps({
+            'version': version, 'build': str(build), 'file': 'Retriever.dmg',
+            'sha256': checksum, 'bytes': dmg.stat().st_size,
+            'published': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }, indent=2) + '\n')
+        # All candidate files are prepared before replacing the old download.
+        for name in (target.name, 'Retriever.dmg.sha256', 'release.json'):
+            os.replace(prepared / name, website / name)
+    return target
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--identity', default='')
@@ -130,21 +158,7 @@ def main():
             digest.update(chunk)
     checksum = digest.hexdigest()
     (staging / 'sha256.txt').write_text(checksum + '  ' + dmg.name + '\n')
-    dist = repo / 'dist'
-    dist.mkdir(exist_ok=True)
-    target = dist / 'Retriever.dmg'
-    if target.exists():
-        backups = dist / 'backups'
-        backups.mkdir(exist_ok=True)
-        stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-        shutil.copy2(target, backups / f'Retriever-{stamp}.dmg')
-    temporary = dist / f'.{staging.name}.dmg'
-    try:
-        shutil.copy2(dmg, temporary)
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    (dist / 'Retriever.dmg.sha256').write_text(checksum + '  Retriever.dmg\n')
+    target = publish_release(repo, dmg, checksum, version, build)
     print(f'Validated local release: {target}\nSHA-256: {checksum}\nBefore public distribution, test a quarantined download on a clean account/Mac when available and record untested environments.')
 
 

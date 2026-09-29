@@ -33,6 +33,8 @@ assets:
 	xcrun swift -module-cache-path .build/ModuleCache Brand/RenderIcon.swift
 paths:
 	@echo "App: $(APP)"
+	@echo "DMG: web-page/Retriever.dmg"
+	@echo "DMG backups: docs/dmg-backups/"
 help:
 	@echo "make build | build-universal | test | check-windows | check-ssh | check-browser | assets | run | paths | release | clean"
 release:
