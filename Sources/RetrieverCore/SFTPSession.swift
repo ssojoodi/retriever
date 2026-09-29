@@ -17,12 +17,16 @@ public final class SFTPSession {
     private static let maximumPacket = 4 * 1024 * 1024
 
     public convenience init(settings: ConnectionSettings, cancellation: SFTPCancellation = SFTPCancellation()) throws {
-        try self.init(executable: URL(fileURLWithPath: "/usr/bin/ssh"), arguments: [
+        try self.init(executable: URL(fileURLWithPath: "/usr/bin/ssh"), arguments: Self.sshArguments(settings), cancellation: cancellation)
+    }
+
+    static func sshArguments(_ settings: ConnectionSettings) -> [String] {
+        [
             "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15",
             "-o", "ServerAliveCountMax=2", "-o", "ClearAllForwardings=yes",
             "-p", String(settings.port), "-l", settings.username, "-s", settings.host, "sftp"
-        ], cancellation: cancellation)
+        ]
     }
 
     // Internal injection permits real protocol integration tests without SSH credentials.

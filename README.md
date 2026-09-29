@@ -8,6 +8,7 @@ Requires macOS 14 or later and full Xcode (developed with Xcode 26.6, Swift 6). 
 make build
 make test
 make check-windows
+make check-ssh
 make run
 ```
 
@@ -26,3 +27,5 @@ No license has been selected.
 The SFTP core uses `/usr/bin/ssh` with existing keys/agent and strict known-host verification. No remote shell commands are constructed. Core integration tests launch `/usr/libexec/sftp-server` locally against temporary fixtures; they need no network or server credentials. Downloads preserve existing destination files. SSH error sheets include bounded diagnostic details. Interactive authentication remains pending.
 
 Icon artwork is editable in `Brand/RenderIcon.swift`. Run `make assets` to regenerate all ten macOS icon slots (16 through 1024 pixels). Generated PNGs are tracked, so fresh checkouts build directly in Xcode without first running the renderer.
+
+`make check-ssh` verifies real authenticated SSH transfers and rejection of unknown/changed host keys and unauthorized client keys. It uses installed macOS sshd, Python 3 and disposable test keys on a loopback-only port. It does not alter your SSH configuration. The fixture server and temporary credentials are cleaned up on exit. This transport check is separate from authenticated GUI verification.
