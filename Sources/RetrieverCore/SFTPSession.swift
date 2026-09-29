@@ -14,15 +14,29 @@ public final class SFTPSession {
     private var connected = false
     var cancellation: SFTPCancellation
     private let idleTimeout: TimeInterval
+    private let authenticationTimeout: TimeInterval
+    private var negotiating = true
+    private var responseTimeout: TimeInterval { negotiating ? authenticationTimeout : idleTimeout }
     private static let maximumPacket = 4 * 1024 * 1024
 
-    public convenience init(settings: ConnectionSettings, cancellation: SFTPCancellation = SFTPCancellation()) throws {
-        try self.init(executable: URL(fileURLWithPath: "/usr/bin/ssh"), arguments: Self.sshArguments(settings), cancellation: cancellation)
+    public convenience init(settings: ConnectionSettings, cancellation: SFTPCancellation = SFTPCancellation(), askpass: URL? = nil) throws {
+        let environment = askpass.map(Self.askpassEnvironment)
+        try self.init(executable: URL(fileURLWithPath: "/usr/bin/ssh"), arguments: Self.sshArguments(settings, interactive: askpass != nil), cancellation: cancellation, authenticationTimeout: askpass == nil ? 30 : 300, environment: environment)
     }
 
-    static func sshArguments(_ settings: ConnectionSettings) -> [String] {
+    static func askpassEnvironment(_ executable: URL) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["SSH_ASKPASS"] = executable.path
+        environment["SSH_ASKPASS_REQUIRE"] = "force"
+        environment["RETRIEVER_ASKPASS"] = "1"
+        environment["LC_ALL"] = "C"
+        return environment
+    }
+
+    static func sshArguments(_ settings: ConnectionSettings, interactive: Bool = false) -> [String] {
         [
-            "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+            "-T", "-o", interactive ? "BatchMode=no" : "BatchMode=yes", "-o", interactive ? "StrictHostKeyChecking=ask" : "StrictHostKeyChecking=yes",
+            "-o", "NumberOfPasswordPrompts=3",
             "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15",
             "-o", "ServerAliveCountMax=2", "-o", "ClearAllForwardings=yes",
             "-p", String(settings.port), "-l", settings.username, "-s", settings.host, "sftp"
@@ -30,12 +44,14 @@ public final class SFTPSession {
     }
 
     // Internal injection permits real protocol integration tests without SSH credentials.
-    init(executable: URL, arguments: [String], cancellation: SFTPCancellation = SFTPCancellation(), idleTimeout: TimeInterval = 30) throws {
+    init(executable: URL, arguments: [String], cancellation: SFTPCancellation = SFTPCancellation(), idleTimeout: TimeInterval = 30, authenticationTimeout: TimeInterval? = nil, environment: [String: String]? = nil) throws {
         self.cancellation = cancellation
         self.idleTimeout = idleTimeout
+        self.authenticationTimeout = authenticationTimeout ?? idleTimeout
         try cancellation.check()
         process.executableURL = executable
         process.arguments = arguments
+        process.environment = environment
         process.standardInput = input
         process.standardOutput = output
         process.standardError = diagnostics
@@ -60,6 +76,7 @@ public final class SFTPSession {
             guard version == 3 else { throw SFTPError.unsupportedVersion(version) }
             while response.remaining > 0 { _ = try response.bytes(); _ = try response.bytes() }
             connected = true
+            negotiating = false
         } catch {
             disconnect()
             throw error
@@ -226,7 +243,7 @@ public final class SFTPSession {
         while offset < bytes.count {
             try cancellation.check()
             drainDiagnostics()
-            guard ProcessInfo.processInfo.systemUptime - lastWrite < idleTimeout else { throw SFTPError.timedOut }
+            guard ProcessInfo.processInfo.systemUptime - lastWrite < responseTimeout else { throw SFTPError.timedOut }
             var state = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
             let ready = poll(&state, 1, 100)
             if ready < 0 {
@@ -259,7 +276,7 @@ public final class SFTPSession {
         while result.count < count {
             try cancellation.check()
             drainDiagnostics()
-            guard ProcessInfo.processInfo.systemUptime - lastRead < idleTimeout else { throw SFTPError.timedOut }
+            guard ProcessInfo.processInfo.systemUptime - lastRead < responseTimeout else { throw SFTPError.timedOut }
             var descriptorState = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
             let ready = poll(&descriptorState, 1, 100)
             if ready < 0 {

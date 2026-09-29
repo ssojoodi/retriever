@@ -3,7 +3,7 @@ import RetrieverCore
 
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSMenuItemValidation {
-    private let browser = SFTPBrowser()
+    private let browser = SFTPBrowser(askpass: Bundle.main.executableURL)
     private let status = NSTextField(labelWithString: "Not connected")
     private let pathField = NSTextField(labelWithString: "")
     private let table = NSTableView()
@@ -254,7 +254,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         guard !busy, let window, window.attachedSheet == nil else { return }
         let alert = NSAlert()
         alert.messageText = "Open SFTP Connection"
-        alert.informativeText = "Uses your SSH keys or agent. The server must already be in your SSH known hosts."
+        alert.informativeText = "Connect with your SSH keys, agent or password. You will be asked to verify new servers."
         let host = NSTextField(string: "")
         host.placeholderString = "Server hostname"
         let user = NSTextField(string: NSUserName())

@@ -8,6 +8,14 @@ struct WindowChecks {
         app.setActivationPolicy(.regular)
         app.finishLaunching()
         AppMenu.install()
+        let (trust, trustField, confirmation) = SSHAskpass.makePrompt("The server fingerprint is SHA256:test. Are you sure you want to continue connecting (yes/no/[fingerprint])?", hint: nil)
+        precondition(confirmation && trustField == nil)
+        precondition(trust.buttons.first?.title == "Cancel", "Trust must default to cancellation")
+        precondition(trust.informativeText.contains("SHA256:test"), "Fingerprint must be visible")
+        let (password, secretField, secretConfirmation) = SSHAskpass.makePrompt("Password:", hint: nil)
+        precondition(!secretConfirmation && secretField != nil)
+        precondition(password.accessoryView is NSSecureTextField, "Secrets must use a secure field")
+
         weak var releasedController: MainWindowController?
         autoreleasepool {
             var controller: MainWindowController? = MainWindowController()

@@ -8,6 +8,6 @@ xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macos14.0" \
   -F "$products" -framework RetrieverCore -framework AppKit \
   -Xlinker -rpath -Xlinker "$(cd "$products" && pwd)" \
   Sources/RetrieverApp/AppDelegate.swift Sources/RetrieverApp/AppMenu.swift \
-  Sources/RetrieverApp/MainWindowController.swift Tests/RetrieverAppChecks/WindowChecks.swift \
+  Sources/RetrieverApp/MainWindowController.swift Sources/RetrieverApp/SSHAskpass.swift Tests/RetrieverAppChecks/WindowChecks.swift \
   -o .build/checks/WindowChecks
 LLVM_PROFILE_FILE=".build/checks/window-checks-%p.profraw" .build/checks/WindowChecks

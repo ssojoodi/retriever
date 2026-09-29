@@ -28,12 +28,13 @@ public actor SFTPBrowser {
     private nonisolated let executor = SFTPExecutor()
     public nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
     private var session: SFTPSession?
-    public init() {}
+    private let askpass: URL?
+    public init(askpass: URL? = nil) { self.askpass = askpass }
 
     public func connect(_ settings: ConnectionSettings, cancellation: SFTPCancellation) throws -> RemoteDirectory {
         disconnect()
         do {
-            let connection = try SFTPSession(settings: settings, cancellation: cancellation)
+            let connection = try SFTPSession(settings: settings, cancellation: cancellation, askpass: askpass)
             session = connection
             return try directory(Data(".".utf8), cancellation: cancellation)
         } catch {

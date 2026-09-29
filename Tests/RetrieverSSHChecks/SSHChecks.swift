@@ -6,12 +6,12 @@ struct SSHChecks {
     static func main() throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let settings = try ConnectionSettings(host: "127.0.0.1", username: CommandLine.arguments[3], port: CommandLine.arguments[2])
-        func connect(hosts: String = "known_hosts", key: String = "client_key") throws -> SFTPSession {
+        func connect(hosts: String = "known_hosts", key: String = "client_key", helper: String? = nil) throws -> SFTPSession {
             let options = ["-F", "/dev/null", "-i", root.appendingPathComponent(key).path,
                            "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
                            "-o", "GlobalKnownHostsFile=/dev/null",
                            "-o", "UserKnownHostsFile=\(root.appendingPathComponent(hosts).path)"]
-            return try SFTPSession(executable: URL(fileURLWithPath: "/usr/bin/ssh"), arguments: options + SFTPSession.sshArguments(settings))
+            return try SFTPSession(executable: URL(fileURLWithPath: "/usr/bin/ssh"), arguments: options + SFTPSession.sshArguments(settings, interactive: helper != nil), environment: helper.map { SFTPSession.askpassEnvironment(root.appendingPathComponent($0)) })
         }
         let session = try connect()
         defer { session.disconnect() }
@@ -36,6 +36,17 @@ struct SSHChecks {
                 precondition(message.contains(expectedMessage), "Unexpected rejection: \(message)")
             }
         }
+        let interactive = try connect(hosts: "new_hosts", key: "encrypted_key", helper: "askpass")
+        _ = try interactive.canonicalPath(Data(".".utf8))
+        interactive.disconnect()
+        precondition(FileManager.default.fileExists(atPath: root.appendingPathComponent("new_hosts").path), "Explicit trust must persist its host key")
+        do {
+            let rejected = try connect(hosts: "rejected_hosts", helper: "reject-askpass")
+            rejected.disconnect()
+            fatalError("Cancelled trust must fail")
+        } catch SFTPError.transport { }
+        precondition(!FileManager.default.fileExists(atPath: root.appendingPathComponent("rejected_hosts").path), "Cancelled trust must not persist")
+        print("PASS: first-host askpass confirmation, encrypted-key passphrase and cancelled trust")
         print("PASS: authenticated SSH negotiation, listing, exact download, unknown/changed host rejection and unauthorized-key rejection")
     }
 }

@@ -21,6 +21,14 @@ with tempfile.TemporaryDirectory(prefix='ssh-', dir=checks) as temporary:
     root = Path(temporary)
     for name in ('host_key', 'client_key'):
         subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(root / name)], check=True)
+    subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', 'disposable-fixture-passphrase', '-f', str(root / 'encrypted_key')], check=True)
+    (root / 'authorized_keys').write_text((root / 'client_key.pub').read_text() + (root / 'encrypted_key.pub').read_text())
+    helper = root / 'askpass'
+    helper.write_text("#!/bin/sh\ncase \"$1\" in\n  *'Are you sure you want to continue connecting'*) printf 'yes\\n' ;;\n  *) printf 'disposable-fixture-passphrase\\n' ;;\nesac\n")
+    helper.chmod(0o700)
+    reject = root / 'reject-askpass'
+    reject.write_text("#!/bin/sh\nexit 1\n")
+    reject.chmod(0o700)
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
@@ -35,7 +43,7 @@ with tempfile.TemporaryDirectory(prefix='ssh-', dir=checks) as temporary:
 Port {port}
 HostKey "{root}/host_key"
 PidFile "{root}/sshd.pid"
-AuthorizedKeysFile "{root}/client_key.pub"
+AuthorizedKeysFile "{root}/authorized_keys"
 AllowUsers {getpass.getuser()}
 PasswordAuthentication no
 KbdInteractiveAuthentication no
