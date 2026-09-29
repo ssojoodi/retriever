@@ -23,6 +23,6 @@ Development is unsigned. Before distribution, copy `Config/LocalSigning.example.
 
 No license has been selected.
 
-The SFTP core uses `/usr/bin/ssh` with existing keys/agent and strict known-host verification. No remote shell commands are constructed. Core integration tests launch `/usr/libexec/sftp-server` locally against temporary fixtures; they need no network or server credentials. Downloads preserve existing destination files. Interactive authentication and detailed SSH error diagnostics remain pending.
+The SFTP core uses `/usr/bin/ssh` with existing keys/agent and strict known-host verification. No remote shell commands are constructed. Core integration tests launch `/usr/libexec/sftp-server` locally against temporary fixtures; they need no network or server credentials. Downloads preserve existing destination files. SSH error sheets include bounded diagnostic details. Interactive authentication remains pending.
 
 Icon artwork is editable in `Brand/RenderIcon.swift`. Run `make assets` to regenerate all ten macOS icon slots (16 through 1024 pixels). Generated PNGs are tracked, so fresh checkouts build directly in Xcode without first running the renderer.

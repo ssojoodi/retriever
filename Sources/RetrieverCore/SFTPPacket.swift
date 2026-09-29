@@ -5,6 +5,7 @@ public enum SFTPError: LocalizedError, Equatable {
     case unsupportedVersion(UInt32)
     case disconnected
     case timedOut
+    case transport(String)
     case server(UInt32, String)
     case destinationExists
 
@@ -12,6 +13,7 @@ public enum SFTPError: LocalizedError, Equatable {
         switch self {
         case .malformedPacket: "The server sent an invalid SFTP response."
         case .unsupportedVersion(let version): "The server uses unsupported SFTP version \(version)."
+        case .transport(let message): "SSH connection failed: \(message)"
         case .timedOut: "The server stopped responding. Connect again to retry."
         case .disconnected: "The SFTP connection closed. Check the server, SSH key and known-host settings."
         case .server(_, let message): message.isEmpty ? "The server could not complete the request." : message

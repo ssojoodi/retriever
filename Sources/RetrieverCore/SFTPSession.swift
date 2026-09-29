@@ -7,6 +7,9 @@ public final class SFTPSession {
     private let process = Process()
     private let input = Pipe()
     private let output = Pipe()
+    private let diagnostics = Pipe()
+    private var diagnosticBytes = Data()
+    private var diagnosticsOpen = false
     private var requestID: UInt32 = 0
     private var connected = false
     var cancellation: SFTPCancellation
@@ -31,12 +34,15 @@ public final class SFTPSession {
         process.arguments = arguments
         process.standardInput = input
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
+        process.standardError = diagnostics
         try process.run()
         // The parent must not retain the child's pipe ends, or EOF cannot arrive.
         try input.fileHandleForReading.close()
         try output.fileHandleForWriting.close()
+        try diagnostics.fileHandleForWriting.close()
+        diagnosticsOpen = true
         do {
+            guard fcntl(diagnostics.fileHandleForReading.fileDescriptor, F_SETFL, O_NONBLOCK) != -1 else { throw SFTPError.disconnected }
             let descriptor = input.fileHandleForWriting.fileDescriptor
             guard fcntl(descriptor, F_SETFL, O_NONBLOCK) != -1,
                   fcntl(descriptor, F_SETNOSIGPIPE, 1) != -1 else { throw SFTPError.disconnected }
@@ -62,6 +68,10 @@ public final class SFTPSession {
         connected = false
         try? input.fileHandleForWriting.close()
         try? output.fileHandleForReading.close()
+        if diagnosticsOpen {
+            try? diagnostics.fileHandleForReading.close()
+            diagnosticsOpen = false
+        }
         if process.isRunning { process.terminate() }
     }
 
@@ -183,6 +193,27 @@ public final class SFTPSession {
         return response
     }
 
+    private func drainDiagnostics() {
+        guard diagnosticsOpen else { return }
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        // Limit each pass even if a process continuously writes stderr.
+        for _ in 0..<16 {
+            let count = Darwin.read(diagnostics.fileHandleForReading.fileDescriptor, &buffer, buffer.count)
+            guard count > 0 else { return }
+            let remaining = 16384 - diagnosticBytes.count
+            if remaining > 0 { diagnosticBytes.append(contentsOf: buffer.prefix(min(count, remaining))) }
+        }
+    }
+
+    private func connectionFailure() -> SFTPError {
+        drainDiagnostics()
+        let message = String(decoding: diagnosticBytes, as: UTF8.self)
+        let filtered = String(message.unicodeScalars.filter {
+            !CharacterSet.controlCharacters.contains($0) || $0 == "\n" || $0 == "\t"
+        }).trimmingCharacters(in: .whitespacesAndNewlines)
+        return filtered.isEmpty ? .disconnected : .transport(filtered)
+    }
+
     private func send(_ packet: SFTPWriter) throws {
         let bytes = packet.framed()
         let descriptor = input.fileHandleForWriting.fileDescriptor
@@ -190,20 +221,21 @@ public final class SFTPSession {
         var lastWrite = ProcessInfo.processInfo.systemUptime
         while offset < bytes.count {
             try cancellation.check()
+            drainDiagnostics()
             guard ProcessInfo.processInfo.systemUptime - lastWrite < idleTimeout else { throw SFTPError.timedOut }
             var state = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
             let ready = poll(&state, 1, 100)
             if ready < 0 {
                 if errno == EINTR { continue }
-                throw SFTPError.disconnected
+                throw connectionFailure()
             }
             if ready == 0 { continue }
-            guard state.revents & Int16(POLLERR | POLLHUP | POLLNVAL) == 0 else { throw SFTPError.disconnected }
+            guard state.revents & Int16(POLLERR | POLLHUP | POLLNVAL) == 0 else { throw connectionFailure() }
             let written = bytes.withUnsafeBytes { buffer in
                 Darwin.write(descriptor, buffer.baseAddress!.advanced(by: offset), min(bytes.count - offset, 32768))
             }
             if written < 0, errno == EAGAIN || errno == EINTR { continue }
-            guard written > 0 else { throw SFTPError.disconnected }
+            guard written > 0 else { throw connectionFailure() }
             offset += written
             lastWrite = ProcessInfo.processInfo.systemUptime
         }
@@ -222,17 +254,18 @@ public final class SFTPSession {
         let descriptor = output.fileHandleForReading.fileDescriptor
         while result.count < count {
             try cancellation.check()
+            drainDiagnostics()
             guard ProcessInfo.processInfo.systemUptime - lastRead < idleTimeout else { throw SFTPError.timedOut }
             var descriptorState = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
             let ready = poll(&descriptorState, 1, 100)
             if ready < 0 {
                 if errno == EINTR { continue }
-                throw SFTPError.disconnected
+                throw connectionFailure()
             }
             if ready == 0 { continue }
             var buffer = [UInt8](repeating: 0, count: min(count - result.count, 65536))
             let received = Darwin.read(descriptor, &buffer, buffer.count)
-            guard received > 0 else { throw SFTPError.disconnected }
+            guard received > 0 else { throw connectionFailure() }
             result.append(contentsOf: buffer.prefix(received))
             lastRead = ProcessInfo.processInfo.systemUptime
         }

@@ -129,6 +129,22 @@ final class SFTPTests: XCTestCase {
         }
     }
 
+    func testSSHFailureIncludesDiagnosticWithoutControlCharacters() {
+        XCTAssertThrowsError(try SFTPSession(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", #"printf 'Permission denied\007\r\n' >&2; exit 1"#])) { error in
+            XCTAssertEqual(error as? SFTPError, .transport("Permission denied"))
+        }
+    }
+
+    func testLargeDiagnosticCannotBlockHandshakeOrGrowWithoutBound() {
+        let started = Date()
+        XCTAssertThrowsError(try SFTPSession(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "i=0; while [ $i -lt 5000 ]; do printf 'Server authentication diagnostic line\\n' >&2; i=$((i+1)); done; exit 1"], idleTimeout: 3)) { error in
+            guard case .transport(let message) = error as? SFTPError else { return XCTFail("Expected bounded SSH diagnostic, got \(error)") }
+            XCTAssertTrue(message.hasPrefix("Server authentication diagnostic line"))
+            XCTAssertLessThanOrEqual(message.utf8.count, 16384)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3)
+    }
+
     private func makeFixture() throws -> URL {
         let result = FileManager.default.temporaryDirectory.appendingPathComponent("retriever-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: result, withIntermediateDirectories: false)
