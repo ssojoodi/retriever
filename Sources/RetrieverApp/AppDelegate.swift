@@ -35,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Connect to a server
         Choose Open Connection (⌘O). Enter the server hostname, username and port; SFTP usually uses port 22. Retriever uses your SSH keys or agent, or asks for a password or key passphrase. Passwords are not saved by Retriever.
 
+        Return to a saved host
+        Open Connection remembers successful hosts and their last visited folder. Choose a saved host to reconnect, or New connection to use another server. Leave Remote folder empty to start in the server home folder. Forget removes the selected saved host; it does not remove SSH host trust. If a remembered folder is unavailable, Retriever opens the server home folder.
+
         Verify a new server
         Compare the displayed fingerprint with one provided by the server administrator before choosing Trust and Connect. Cancel if it does not match. Accepted keys are saved in SSH known_hosts. A changed key is rejected.
 

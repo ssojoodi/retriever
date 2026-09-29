@@ -17,7 +17,11 @@ struct BrowserChecks {
         app.setActivationPolicy(.regular)
         app.finishLaunching()
         AppMenu.install()
-        let controller = MainWindowController(browser: browser)
+        let suite = "RetrieverBrowserChecks.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let history = ConnectionHistory(defaults: defaults)
+        let controller = MainWindowController(browser: browser, history: history)
         let window = controller.window!
         controller.showWindow(nil)
         window.makeKeyAndOrderFront(nil)
@@ -48,6 +52,40 @@ struct BrowserChecks {
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         controller.openSelected(nil)
         waitUntil("Empty folder navigation") { !controller.busy && table.numberOfRows == 0 }
+        precondition(history.hosts.count == 1)
+        let savedPath = history.hosts[0].lastPath
+        precondition(String(decoding: savedPath, as: UTF8.self).hasSuffix("/Empty folder"))
+        controller.disconnect(nil)
+        waitUntil("Disconnect before reconnect") { !controller.busy && window.title == "Retriever" }
+        controller.openConnection(nil)
+        waitUntil("Saved host sheet") { window.attachedSheet != nil }
+        let savedSheet = window.attachedSheet!
+        let controls = descendants(savedSheet.contentView!)
+        let savedPicker = controls.compactMap { $0 as? NSPopUpButton }.first!
+        precondition(savedPicker.indexOfSelectedItem == 1, "Most recent host must be selected")
+        let savedFolder = controls.compactMap { $0 as? NSTextField }.first { $0.accessibilityLabel() == "Remote folder" }!
+        precondition(savedFolder.stringValue == String(decoding: savedPath, as: UTF8.self))
+        savedPicker.selectItem(at: 0)
+        NSApp.sendAction(savedPicker.action!, to: savedPicker.target, from: savedPicker)
+        let savedServer = controls.compactMap { $0 as? NSTextField }.first { $0.accessibilityLabel() == "Server" }!
+        precondition(savedServer.stringValue.isEmpty && savedFolder.stringValue.isEmpty, "New connection clears saved values")
+        savedPicker.selectItem(at: 1)
+        NSApp.sendAction(savedPicker.action!, to: savedPicker.target, from: savedPicker)
+        savedServer.stringValue = "other-server"
+        savedServer.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: savedServer))
+        precondition(savedPicker.indexOfSelectedItem == 0 && savedFolder.stringValue.isEmpty, "Changed identity must clear another host's path")
+        savedPicker.selectItem(at: 1)
+        NSApp.sendAction(savedPicker.action!, to: savedPicker.target, from: savedPicker)
+        pump()
+        let savedScreenshot = Process()
+        savedScreenshot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        savedScreenshot.arguments = ["-x", "-D", "1", "artifacts/verification/saved-hosts-sheet.png"]
+        try savedScreenshot.run()
+        savedScreenshot.waitUntilExit()
+        precondition(savedScreenshot.terminationStatus == 0)
+        controls.compactMap { $0 as? NSButton }.first { $0.title == "Connect" }!.performClick(nil)
+        waitUntil("Reconnect to last folder") { !controller.busy && window.title == "127.0.0.1 — Retriever" }
+        precondition(table.numberOfRows == 0, "Reconnect should restore the empty folder, not home")
         controller.goUp(nil)
         waitUntil("Parent navigation") { !controller.busy && table.numberOfRows == 2 }
         table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
@@ -81,8 +119,17 @@ struct BrowserChecks {
         precondition(!download.isEnabled && open.isEnabled, "Failure must allow reconnect and disable download")
         controller.disconnect(nil)
         waitUntil("Disconnect") { !controller.busy && table.numberOfRows == 0 }
+        controller.openConnection(nil)
+        waitUntil("Forget host sheet") { window.attachedSheet != nil }
+        let forgetSheet = window.attachedSheet!
+        let forgetControls = descendants(forgetSheet.contentView!)
+        forgetControls.compactMap { $0 as? NSButton }.first { $0.title == "Forget" }!.performClick(nil)
+        precondition(history.hosts.isEmpty, "Forget must remove persisted host")
+        precondition(forgetControls.compactMap { $0 as? NSPopUpButton }.first!.indexOfSelectedItem == 0)
+        forgetControls.compactMap { $0 as? NSButton }.first { $0.title == "Cancel" }!.performClick(nil)
+        waitUntil("Forget sheet dismissal") { window.attachedSheet == nil }
         window.performClose(nil)
-        print("PASS: authenticated native connection sheet, navigation, save cancellation, exact download, existing-file preservation, error state and disconnect")
+        print("PASS: authenticated native connection sheet, navigation, save cancellation, exact download, existing-file preservation, error state, saved-folder reconnect, forget and disconnect")
     }
 
     private static func descendants(_ view: NSView) -> [NSView] {

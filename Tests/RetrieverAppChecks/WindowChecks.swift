@@ -37,7 +37,7 @@ struct WindowChecks {
         app.delegate = nil
         weak var releasedController: MainWindowController?
         autoreleasepool {
-            var controller: MainWindowController? = MainWindowController()
+            var controller: MainWindowController? = MainWindowController(history: ConnectionHistory(defaults: UserDefaults(suiteName: "WindowChecks." + UUID().uuidString)!))
             releasedController = controller
             guard let window = controller?.window else { fatalError("Missing browser window") }
             controller?.showWindow(nil)
@@ -80,7 +80,7 @@ struct WindowChecks {
         var controller: MainWindowController?
         weak var released: MainWindowController?
         autoreleasepool {
-            controller = MainWindowController(browser: browser)
+            controller = MainWindowController(browser: browser, history: ConnectionHistory(defaults: UserDefaults(suiteName: "WindowChecks." + UUID().uuidString)!))
             released = controller
             let window = controller!.window!
             controller!.showWindow(nil)

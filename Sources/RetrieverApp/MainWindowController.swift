@@ -4,6 +4,9 @@ import RetrieverCore
 @MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSMenuItemValidation {
     private let browser: SFTPBrowser
+    private let history: ConnectionHistory
+    private var activeSettings: ConnectionSettings?
+    private var connectionSheet: ConnectionSheet?
     private let status = NSTextField(labelWithString: "Not connected")
     private let pathField = NSTextField(labelWithString: "")
     private let table = NSTableView()
@@ -15,8 +18,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
     private(set) var busy = false
     private var afterCleanup: (@MainActor () -> Void)?
 
-    init(browser: SFTPBrowser = SFTPBrowser(askpass: Bundle.main.executableURL)) {
+    init(browser: SFTPBrowser = SFTPBrowser(askpass: Bundle.main.executableURL), history: ConnectionHistory = ConnectionHistory()) {
         self.browser = browser
+        self.history = history
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Retriever"
         window.minSize = NSSize(width: 580, height: 360)
@@ -155,6 +159,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
             guard let self else { return }
             do { try await operation(signal) }
             catch {
+                activeSettings = nil
                 directory = nil
                 table.reloadData()
                 window?.title = "Retriever"
@@ -174,14 +179,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
     }
     private func show(_ result: RemoteDirectory) {
         directory = result
+        if let activeSettings { history.updateLocation(result.path, for: activeSettings) }
         table.deselectAll(nil)
         table.reloadData()
         status.stringValue = "\(result.entries.count) items"
         updateControls()
     }
-    private func connect(_ settings: ConnectionSettings) {
+    private func connect(_ settings: ConnectionSettings, startingAt path: Data?) {
         runOperation("Connecting to \(settings.host)…") { [self] signal in
-            show(try await browser.connect(settings, cancellation: signal))
+            let result = try await browser.connect(settings, startingAt: path, cancellation: signal)
+            activeSettings = settings
+            history.remember(settings, path: result.path)
+            show(result)
+            if result.usedHomeFallback { status.stringValue = "Previous folder unavailable. Opened your home folder." }
             window?.title = "\(settings.host) — Retriever"
         }
     }
@@ -232,6 +242,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         guard !busy else { return }
         runOperation("Disconnecting…") { [self] _ in
             await browser.disconnect()
+            activeSettings = nil
             directory = nil
             table.reloadData()
             window?.title = "Retriever"
@@ -264,37 +275,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
     }
     @objc func openConnection(_ sender: Any?) {
         guard !busy, let window, window.attachedSheet == nil else { return }
-        let alert = NSAlert()
-        alert.messageText = "Open SFTP Connection"
-        alert.informativeText = "Connect with your SSH keys, agent or password. You will be asked to verify new servers."
-        let host = NSTextField(string: "")
-        host.placeholderString = "Server hostname"
-        let user = NSTextField(string: NSUserName())
-        let port = NSTextField(string: "22")
-        let fields = NSStackView()
-        fields.orientation = .vertical
-        fields.alignment = .leading
-        fields.spacing = 8
-        for (label, field) in [("Server", host), ("Username", user), ("Port", port)] {
-            field.setAccessibilityLabel(label)
-            fields.addArrangedSubview(NSTextField(labelWithString: label))
-            fields.addArrangedSubview(field)
-            field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        let sheet = ConnectionSheet(history: history)
+        connectionSheet = sheet
+        sheet.present(on: window) { [weak self] settings, path in
+            guard let self else { return }
+            connectionSheet = nil
+            if let settings { connect(settings, startingAt: path) }
         }
-        fields.frame = NSRect(x: 0, y: 0, width: 300, height: 170)
-        alert.accessoryView = fields
-        alert.addButton(withTitle: "Connect")
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            do {
-                let settings = try ConnectionSettings(host: host.stringValue, username: user.stringValue, port: port.stringValue)
-                self?.connect(settings)
-            } catch {
-                let failure = NSAlert(error: error)
-                failure.beginSheetModal(for: window)
-            }
-        }
-        alert.window.initialFirstResponder = host
     }
 }

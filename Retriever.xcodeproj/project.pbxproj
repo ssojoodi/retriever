@@ -6,6 +6,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+ D00000000000000000000007 = {isa = PBXBuildFile; fileRef = C00000000000000000000007; };
+ D00000000000000000000006 = {isa = PBXBuildFile; fileRef = C00000000000000000000006; };
  D00000000000000000000005 = {isa = PBXBuildFile; fileRef = C00000000000000000000005; };
  D00000000000000000000004 = {isa = PBXBuildFile; fileRef = C00000000000000000000004; };
  D00000000000000000000003 = {isa = PBXBuildFile; fileRef = C00000000000000000000003; };
@@ -36,6 +38,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+ C00000000000000000000007 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSheet.swift; sourceTree = "<group>"; };
+ C00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionHistory.swift; sourceTree = "<group>"; };
  C00000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAskpass.swift; sourceTree = "<group>"; };
  C00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SFTPBrowser.swift; sourceTree = "<group>"; };
  C00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SFTPTests.swift; sourceTree = "<group>"; };
@@ -66,8 +70,8 @@
 /* Begin PBXGroup section */
 		A00800100100100100100101 = {isa = PBXGroup; children = (A00800100100100100100102 /* Sources */, A00800100100100100100105 /* Tests */, A00800100100100100100106 /* Products */, ); sourceTree = "<group>"; };
 		A00800100100100100100102 /* Sources */ = {isa = PBXGroup; children = (A00800100100100100100103 /* RetrieverCore */, A00800100100100100100104 /* RetrieverApp */, ); path = Sources; sourceTree = "<group>"; };
-		A00800100100100100100103 /* RetrieverCore */ = {isa = PBXGroup; children = (C00000000000000000000004, C00000000000000000000001, C00000000000000000000002, A00200100100100100100101 /* AppState.swift */, ); path = RetrieverCore; sourceTree = "<group>"; };
-		A00800100100100100100104 /* RetrieverApp */ = {isa = PBXGroup; children = (C00000000000000000000005, A00200100100100100100113 /* AppDelegate.swift */, A00200100100100100100108 /* main.swift */, A00200100100100100100109 /* AppMenu.swift */, A0020010010010010010010A /* MainWindowController.swift */, A00200100100100100100111 /* Assets.xcassets */, ); path = RetrieverApp; sourceTree = "<group>"; };
+		A00800100100100100100103 /* RetrieverCore */ = {isa = PBXGroup; children = (C00000000000000000000006, C00000000000000000000004, C00000000000000000000001, C00000000000000000000002, A00200100100100100100101 /* AppState.swift */, ); path = RetrieverCore; sourceTree = "<group>"; };
+		A00800100100100100100104 /* RetrieverApp */ = {isa = PBXGroup; children = (C00000000000000000000007, C00000000000000000000005, A00200100100100100100113 /* AppDelegate.swift */, A00200100100100100100108 /* main.swift */, A00200100100100100100109 /* AppMenu.swift */, A0020010010010010010010A /* MainWindowController.swift */, A00200100100100100100111 /* Assets.xcassets */, ); path = RetrieverApp; sourceTree = "<group>"; };
 		A00800100100100100100105 /* Tests */ = {isa = PBXGroup; children = (C00000000000000000000003, A0020010010010010010010C /* AppStateTests.swift */, ); path = Tests/RetrieverCoreTests; sourceTree = "<group>"; };
 		A00800100100100100100106 /* Products */ = {isa = PBXGroup; children = (A00200100100100100100106 /* RetrieverCore.framework */, A00200100100100100100107 /* Retriever.app */, A0020010010010010010010D /* RetrieverCoreTests.xctest */, ); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
@@ -87,8 +91,8 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A01000100100100100100101 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D00000000000000000000004, D00000000000000000000002, D00000000000000000000001, A00100100100100100100101 /* AppState.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
-		A01000100100100100100102 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D00000000000000000000005, A00100100100100100100113 /* AppDelegate.swift in Sources */, A00100100100100100100108 /* main.swift in Sources */, A00100100100100100100109 /* AppMenu.swift in Sources */, A0010010010010010010010A /* MainWindowController.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A01000100100100100100101 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D00000000000000000000006, D00000000000000000000004, D00000000000000000000002, D00000000000000000000001, A00100100100100100100101 /* AppState.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A01000100100100100100102 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D00000000000000000000007, D00000000000000000000005, A00100100100100100100113 /* AppDelegate.swift in Sources */, A00100100100100100100108 /* main.swift in Sources */, A00100100100100100100109 /* AppMenu.swift in Sources */, A0010010010010010010010A /* MainWindowController.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		A01000100100100100100103 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D00000000000000000000003, A0010010010010010010010C /* AppStateTests.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 

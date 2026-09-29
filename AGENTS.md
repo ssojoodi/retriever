@@ -8,9 +8,9 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 - First usable slice: one connection, directory navigation, one download with cancellation and visible errors.
 - Bundle identifiers: `ca.sahand.Retriever`, `ca.sahand.RetrieverCore`, `ca.sahand.RetrieverCoreTests`. Inferred personal namespace; confirm before distribution.
 - One retained browser window, plus a reusable auxiliary Help panel; closing the last window quits. Follow system light/dark appearance.
-- Connection and selection state are transient initially. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
+- Successful hosts (server, username, port) and the last visited remote folder persist locally in UserDefaults. Selection remains transient; do not connect automatically on launch. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
 - Direct Developer ID distribution, separately signed and notarized DMG. Universal arm64/x86_64 Release compilation and binary slices verified. Intel runtime remains untested.
-- Initial non-goals: FTP, uploads, remote deletion, synchronization, tabs, bookmarks, App Store. A static download website is now maintained in `web-page/`.
+- Initial non-goals: FTP, uploads, remote deletion, synchronization, tabs, named bookmarks, App Store. A static download website is now maintained in `web-page/`.
 - No license grant selected yet; do not copy a reference project's license.
 
 ## Layout and commands
@@ -41,3 +41,6 @@ Shared version and signing settings live in `Config/Signing.xcconfig`. Local cre
 
 ## Website release handoff
 `make release` signs/notarizes and validates the app and DMG, requires the installed-copy verification, then publishes locally to `web-page/Retriever.dmg`, with checksum and release.json. Previous artifacts are backed up in ignored `docs/dmg-backups/`. The static website enables downloads only when generated release metadata and DMG are available. No website upload occurs. `python3 scripts/check_release_publication.py` tests output/backups without credentials.
+
+## Saved hosts
+`ConnectionHistory` is a main-actor store of successful host/account/port identities and raw folder bytes. `ConnectionSheet` provides the saved-host picker, New connection, editable Remote folder, and Forget. Save only after successful listing; update locations after successful navigation. Forgetting a connected host must not re-add it during navigation. SFTP reconnect falls back to home only on complete path-related server status responses; do not hide transport/authentication/cancellation errors. Inject isolated UserDefaults suites in checks.

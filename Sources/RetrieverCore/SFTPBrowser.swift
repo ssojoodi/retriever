@@ -22,6 +22,12 @@ private final class SFTPExecutor: SerialExecutor {
 public struct RemoteDirectory: Sendable {
     public let path: Data
     public let entries: [RemoteEntry]
+    public let usedHomeFallback: Bool
+    init(path: Data, entries: [RemoteEntry], usedHomeFallback: Bool = false) {
+        self.path = path
+        self.entries = entries
+        self.usedHomeFallback = usedHomeFallback
+    }
 }
 
 public actor SFTPBrowser {
@@ -43,11 +49,24 @@ public actor SFTPBrowser {
         self.makeSession = makeSession
     }
 
-    public func connect(_ settings: ConnectionSettings, cancellation: SFTPCancellation) throws -> RemoteDirectory {
+    public func connect(_ settings: ConnectionSettings, startingAt path: Data? = nil, cancellation: SFTPCancellation) throws -> RemoteDirectory {
         disconnect()
         do {
             let connection = try makeSession(settings, cancellation)
             session = connection
+            if let path, !path.isEmpty {
+                do {
+                    let canonical = try connection.canonicalPath(path)
+                    return RemoteDirectory(path: canonical, entries: try connection.listDirectory(canonical))
+                } catch SFTPError.server(let code, _) where [2, 3, 4].contains(code) {
+                    // A complete SFTP status response leaves the stream aligned.
+                    // Missing/inaccessible/non-directory locations may fall back;
+                    // transport, authentication and cancellation errors must surface.
+                    try cancellation.check()
+                    let canonical = try connection.canonicalPath(initialPath)
+                    return RemoteDirectory(path: canonical, entries: try connection.listDirectory(canonical), usedHomeFallback: true)
+                }
+            }
             return try directory(initialPath, cancellation: cancellation)
         } catch {
             disconnect()

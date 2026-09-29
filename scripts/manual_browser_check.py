@@ -28,6 +28,7 @@ def main():
     repo = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, default=repo / '.build/DerivedData/Build/Products/Debug/Retriever.app')
+    parser.add_argument('--relaunch-once', action='store_true', help='Keep the fixture running for one app relaunch to test saved hosts.')
     args = parser.parse_args()
     app = args.app.resolve() / 'Contents/MacOS/Retriever'
     if not app.is_file():
@@ -103,10 +104,13 @@ Subsystem sftp internal-sftp
                 print(f'Server: 127.0.0.1\nUsername: {getpass.getuser()}\nPort: {port}', flush=True)
                 subprocess.run(['/usr/bin/ssh-keygen', '-lf', str(root / 'host_key.pub')], check=True)
                 print('Download retriever-test.txt. Expected text: Retrieved successfully with Retriever.\nQuit this Retriever instance to stop the fixture and remove temporary keys.', flush=True)
-                application = subprocess.Popen([str(app)], env=environment, stdout=app_log, stderr=app_log)
-                code = application.wait()
-                if code:
-                    raise RuntimeError(f'Retriever exited with status {code}; see manual-app.log.')
+                for launch in range(2 if args.relaunch_once else 1):
+                    if launch:
+                        print('Relaunching Retriever with the same server. Open Connection should remember the host and last folder.', flush=True)
+                    application = subprocess.Popen([str(app)], env=environment, stdout=app_log, stderr=app_log)
+                    code = application.wait()
+                    if code:
+                        raise RuntimeError(f'Retriever exited with status {code}; see manual-app.log.')
         finally:
             stop(application)
             stop(server)

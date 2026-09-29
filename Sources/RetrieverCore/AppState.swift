@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ConnectionSettings: Equatable, Sendable {
+public struct ConnectionSettings: Equatable, Sendable, Codable {
     public let host: String
     public let username: String
     public let port: UInt16
@@ -18,6 +18,16 @@ public struct ConnectionSettings: Equatable, Sendable {
         self.host = host
         self.username = username
         self.port = value
+    }
+}
+
+extension ConnectionSettings {
+    private enum CodingKeys: String, CodingKey { case host, username, port }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(host: values.decode(String.self, forKey: .host),
+                      username: values.decode(String.self, forKey: .username),
+                      port: String(values.decode(UInt16.self, forKey: .port)))
     }
 }
 

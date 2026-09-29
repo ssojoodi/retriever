@@ -2,6 +2,32 @@ import XCTest
 @testable import RetrieverCore
 
 final class SFTPTests: XCTestCase {
+    func testReconnectRestoresFolderAndFallsBackWhenMissing() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let subfolder = fixture.appendingPathComponent("remember me")
+        try FileManager.default.createDirectory(at: subfolder, withIntermediateDirectories: false)
+        let browser = SFTPBrowser(initialPath: Data(fixture.path.utf8)) { _, cancellation in
+            try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [], cancellation: cancellation)
+        }
+        let settings = try ConnectionSettings(host: "fixture", username: "test", port: "22")
+        let first = try await browser.connect(settings, startingAt: Data(subfolder.path.utf8), cancellation: SFTPCancellation())
+        XCTAssertTrue(String(decoding: first.path, as: UTF8.self).hasSuffix("/remember me"))
+        XCTAssertFalse(first.usedHomeFallback)
+        try FileManager.default.removeItem(at: subfolder)
+        let fallback = try await browser.connect(settings, startingAt: first.path, cancellation: SFTPCancellation())
+        XCTAssertTrue(fallback.usedHomeFallback)
+        XCTAssertTrue(fallback.entries.isEmpty)
+        // Cancellation is never swallowed by the missing-folder fallback.
+        let cancelled = SFTPCancellation()
+        cancelled.cancel()
+        do {
+            _ = try await browser.connect(settings, startingAt: first.path, cancellation: cancelled)
+            XCTFail("Cancelled connection unexpectedly succeeded")
+        } catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+        await browser.disconnect()
+    }
+
     func testRejectsTruncatedAndOversizedStrings() {
         for data in [Data(), Data([0, 0, 0]), Data([255, 255, 255, 255]), Data([0, 0, 0, 2, 65])] {
             var reader = SFTPReader(data)
