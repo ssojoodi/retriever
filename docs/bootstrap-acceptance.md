@@ -1,6 +1,6 @@
 # Bootstrap acceptance audit
 
-Current audit: 2026-09-28. This file records evidence and open gates; it is not a completion declaration.
+Current audit: 2026-09-29. This file records evidence and open gates; it is not a completion declaration.
 
 | Blueprint requirement | Current evidence | Remaining work |
 | --- | --- | --- |
@@ -9,10 +9,10 @@ Current audit: 2026-09-28. This file records evidence and open gates; it is not 
 | Independent checkout | Fresh archive of committed source passed `make build` without prior products or signing configuration | None for the verified commit |
 | Authoritative Xcode targets and scheme | App, embedded framework and hostless XCTest bundle; plist lint and shared scheme verified | None known |
 | Native shell and identity | Running built-app screenshots; icon assets and bundle metadata verified | About panel visual check and remaining keyboard/overflow checks; Help routing/reuse/close and screenshot verified |
-| Actual SFTP workflow | Real authenticated SSH fixture and native controller checks | Complete packaged-app connection-to-save flow; native save confirmation remains unverified |
-| Trust and credentials | Native prompt construction checks; built helper preview; scripted askpass encrypted-key and trust tests | Native helper response/cancellation/lifetime integration; external password server not tested |
+| Actual SFTP workflow | Real authenticated SSH fixture and native controller checks; user confirmed packaged-app connection and text-file download through the native Save dialog on 2026-09-29 | Explicit manual folder/Up confirmation and saved-content comparison not separately reported |
+| Trust and credentials | User reached native trust prompt and subsequently completed packaged-app download; prompt construction and scripted encrypted-key tests | Native password/passphrase response/cancellation/lifetime integration; external password server not tested |
 | Transfer integrity | 21 core tests, exact bytes, mid-transfer cancellation, destination-race and symlink preservation | External-volume runtime coverage; more transfer/error UX checks |
-| Window lifecycle | AppKit routing, text focus, sheet cancellation, minimum resize, idle close and release checks | Busy close preservation/cancellation/deferred close and controller release now verified; complete packaged-app quit still pending |
+| Window lifecycle | AppKit routing, text focus, sheet cancellation, minimum resize, idle close and release checks | Busy close preservation/cancellation/deferred close and controller release verified; packaged process exited with status 0 and fixture cleanup completed. Close-button versus menu-quit path not separately reported |
 | Predictable commands | build, test, run, assets, check-windows, check-ssh, check-browser, paths, help, clean | `make release` implements signing, notarization, DMG validation and a manual installed-copy gate; credential preflight checked, full pipeline unverified |
 | Reproducible brand assets | Native renderer, ten tracked icon slots, deterministic hashes and inspected raster sizes | Finder/About visual checks |
 | Universal Release build | arm64 and x86_64 verified in app and framework; macOS 14 deployment metadata; version 0.1.0 build 1 | Intel runtime not tested |
