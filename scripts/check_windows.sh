@@ -10,4 +10,4 @@ xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macos14.0" \
   Sources/RetrieverApp/AppDelegate.swift Sources/RetrieverApp/AppMenu.swift \
   Sources/RetrieverApp/MainWindowController.swift Tests/RetrieverAppChecks/WindowChecks.swift \
   -o .build/checks/WindowChecks
-.build/checks/WindowChecks
+LLVM_PROFILE_FILE=".build/checks/window-checks-%p.profraw" .build/checks/WindowChecks
