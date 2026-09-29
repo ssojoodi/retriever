@@ -21,7 +21,7 @@ The native browser is wired to the tested SFTP core; authenticated SSH through t
 
 `Sources/RetrieverApp` contains AppKit UI, `Sources/RetrieverCore` contains testable behavior, and `Tests/RetrieverCoreTests` contains hostless XCTest tests. Plans and evidence notes are tracked under `docs/`; screenshot artifacts are ignored under `artifacts/verification/`. No connection history or passwords are persisted by Retriever. Closing the last window quits.
 
-Development is unsigned. Before distribution, copy `Config/LocalSigning.example.xcconfig` to ignored `Config/LocalSigning.xcconfig`, and `release.env.example` to ignored `release.env` using existing Apple Developer credentials. `release.env` uses Make syntax, not shell syntax. Version settings live in `Config/Signing.xcconfig`. The signed, notarized universal DMG pipeline is a separate milestone; `make release` currently fails explicitly.
+Development is unsigned. Before distribution, copy `Config/LocalSigning.example.xcconfig` to ignored `Config/LocalSigning.xcconfig`, and `release.env.example` to ignored `release.env` using existing Apple Developer credentials. `release.env` uses Make syntax, not shell syntax. Version settings live in `Config/Signing.xcconfig`. `make release` runs the universal Developer ID signing and app/DMG notarization pipeline in an interactive terminal. It validates credentials before building, retains evidence in `.build/release/`, and opens an app copied from the final DMG for manual connect/browse/download/cancel/quit checks before replacing `dist/Retriever.dmg`. Previous artifacts are backed up. The full pipeline remains unverified because signing credentials are not available; clean-account quarantine checks remain a distribution gate.
 
 No license has been selected.
 

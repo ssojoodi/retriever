@@ -13,7 +13,7 @@ Current audit: 2026-09-28. This file records evidence and open gates; it is not 
 | Trust and credentials | Native prompt construction checks; built helper preview; scripted askpass encrypted-key and trust tests | Native helper response/cancellation/lifetime integration; external password server not tested |
 | Transfer integrity | 21 core tests, exact bytes, mid-transfer cancellation, destination-race and symlink preservation | External-volume runtime coverage; more transfer/error UX checks |
 | Window lifecycle | AppKit routing, text focus, sheet cancellation, minimum resize, idle close and release checks | Busy close preservation/cancellation/deferred close and controller release now verified; complete packaged-app quit still pending |
-| Predictable commands | build, test, run, assets, check-windows, check-ssh, check-browser, paths, help, clean | `make release` is an explicit failure placeholder until release pipeline is implemented |
+| Predictable commands | build, test, run, assets, check-windows, check-ssh, check-browser, paths, help, clean | `make release` implements signing, notarization, DMG validation and a manual installed-copy gate; credential preflight checked, full pipeline unverified |
 | Reproducible brand assets | Native renderer, ten tracked icon slots, deterministic hashes and inspected raster sizes | Finder/About visual checks |
 | Universal Release build | arm64 and x86_64 verified in app and framework; macOS 14 deployment metadata; version 0.1.0 build 1 | Intel runtime not tested |
 | Direct distribution | Signing config examples and version source tracked | Verified identity/profile, signing and notarized DMG pipeline, Gatekeeper and installed DMG checks; separate release milestone |

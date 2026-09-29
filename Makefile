@@ -34,9 +34,8 @@ assets:
 paths:
 	@echo "App: $(APP)"
 help:
-	@echo "make build | build-universal | test | check-windows | check-ssh | check-browser | assets | run | paths | clean"
+	@echo "make build | build-universal | test | check-windows | check-ssh | check-browser | assets | run | paths | release | clean"
 release:
-	@echo "Release pipeline is not implemented yet; no distributable has been produced." >&2
-	@exit 1
+	python3 scripts/release.py --identity "$(SIGN_IDENTITY)" --profile "$(NOTARY_PROFILE)"
 clean:
 	$(XCODE) clean
