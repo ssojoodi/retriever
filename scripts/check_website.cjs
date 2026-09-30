@@ -41,11 +41,24 @@ const fs = require('node:fs');
     assert.equal(await page.locator('[data-latest-release-label]').textContent(),'Available now');
     assert.equal(await page.locator('#v0-2-0').count(),1);
     assert.equal(await page.locator('#v0-1-0').count(),1);
+    const screenshots = page.locator('#v0-2-0 .release-screenshot img');
+    assert.equal(await screenshots.count(), 4);
+    for (const screenshot of await screenshots.all()) {
+      await screenshot.scrollIntoViewIfNeeded();
+      await screenshot.evaluate(image => image.decode());
+      assert.match(await screenshot.getAttribute('src'), /^screenshots\/0\.2\.0\/[^/]+\.png$/);
+      assert.ok(await screenshot.evaluate(image => image.naturalWidth > 0 && image.naturalHeight > 0));
+      const link = screenshot.locator('..');
+      assert.equal(await link.getAttribute('href'), await screenshot.getAttribute('src'));
+    }
+    await page.evaluate(()=>window.scrollTo(0,0));
     await page.screenshot({path:'artifacts/verification/release-notes-desktop.png',fullPage:true});
     await page.setViewportSize({width:390,height:844});
     for (const path of ['/', '/release-notes.html']) {
       await page.goto('http://127.0.0.1:8105'+path,{waitUntil:'networkidle'});
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth), 'Mobile horizontal overflow: '+path);
+      for (const screenshot of await page.locator('.release-screenshot img').all()) { await screenshot.scrollIntoViewIfNeeded(); await screenshot.evaluate(image => image.decode()); }
+      await page.evaluate(()=>window.scrollTo(0,0));
       await page.screenshot({path:'artifacts/verification/'+(path==='/'?'website-mobile':'release-notes-mobile')+'.png',fullPage:true});
     }
     const download=await page.request.get('http://127.0.0.1:8105/Retriever.dmg');

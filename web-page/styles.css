@@ -597,3 +597,8 @@ figure { margin: 0; }
 .download-panel > [data-pending] { grid-column: 3; }
 @media (max-width: 880px) { .download-panel > [data-pending] { grid-column: auto; } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.release-screenshot > a { display: block; border-radius: 8px; }
+.release-screenshot img { background: var(--paper-soft); }
+.release-screenshot figcaption a { white-space: nowrap; text-underline-offset: 3px; }
+.screenshot-note { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
