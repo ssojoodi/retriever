@@ -4,15 +4,19 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var helpPanel: NSPanel?
     private var controller: MainWindowController?
+    private var bundledIcon: NSImage? {
+        guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns") else { return nil }
+        return NSImage(contentsOf: url)
+    }
     @objc func showAbout(_ sender: Any?) {
         var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
-        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
-           let icon = NSImage(contentsOf: url) {
+        if let icon = bundledIcon {
             options[.applicationIcon] = icon
         }
         NSApp.orderFrontStandardAboutPanel(options: options)
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let icon = bundledIcon { NSApp.applicationIconImage = icon }
         controller = MainWindowController()
         controller?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
