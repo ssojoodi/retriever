@@ -2,14 +2,72 @@ import AppKit
 import RetrieverCore
 
 @MainActor
-final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSMenuItemValidation {
+private final class FileNode {
+    let entry: RemoteEntry
+    let path: Data
+    var children: [FileNode]?
+    init(_ entry: RemoteEntry, parent: Data) {
+        self.entry = entry
+        path = SFTPSession.appending(entry.nameBytes, to: parent)
+    }
+}
+
+@MainActor
+private final class FolderDisclosureButton: NSButton {
+    weak var outline: NSOutlineView?
+    override func draw(_ dirtyRect: NSRect) {
+        guard let outline else { return }
+        let item = outline.item(atRow: outline.row(for: self))
+        let expanded = item.map { outline.isItemExpanded($0) } ?? false
+        let symbol = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        if let symbol {
+            let scale = min(14 / symbol.size.width, 14 / symbol.size.height)
+            let size = NSSize(width: symbol.size.width * scale, height: symbol.size.height * scale)
+            symbol.draw(in: NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height))
+        }
+    }
+}
+
+@MainActor
+private final class FileOutlineView: NSOutlineView {
+    override func makeView(withIdentifier identifier: NSUserInterfaceItemIdentifier, owner: Any?) -> NSView? {
+        if identifier == NSOutlineView.disclosureButtonIdentifier {
+            let button = FolderDisclosureButton(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
+            button.identifier = identifier
+            button.outline = self
+            button.isBordered = false
+            button.target = self
+            button.action = #selector(toggleFolder(_:))
+            button.setAccessibilityLabel("Expand or collapse folder")
+            return button
+        }
+        return super.makeView(withIdentifier: identifier, owner: owner)
+    }
+    @objc private func toggleFolder(_ sender: NSButton) {
+        guard isEnabled, let item = item(atRow: row(for: sender)) else { return }
+        if isItemExpanded(item) { collapseItem(item) } else { expandItem(item) }
+        needsDisplay = true
+    }
+
+    override func frameOfOutlineCell(atRow row: Int) -> NSRect {
+        let frame = super.frameOfOutlineCell(atRow: row)
+        guard !frame.isEmpty else { return frame }
+        return NSRect(x: frame.midX - 10, y: rect(ofRow: row).midY - 10, width: 20, height: 20)
+    }
+}
+
+@MainActor
+final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSWindowDelegate, NSMenuItemValidation {
     private let browser: SFTPBrowser
     private let history: ConnectionHistory
     private var activeSettings: ConnectionSettings?
     private var connectionSheet: ConnectionSheet?
     private let status = NSTextField(labelWithString: "Not connected")
     private let pathField = NSTextField(labelWithString: "")
-    private let table = NSTableView()
+    private let table = FileOutlineView()
+    private var roots: [FileNode] = []
+    private var completingExpansion = false
     private let scroll = NSScrollView()
     private let progress = NSProgressIndicator()
     private let empty = NSTextField(labelWithString: "Open a connection to browse your files.")
@@ -43,7 +101,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         }
         table.delegate = self
         table.dataSource = self
-        table.rowHeight = 28
+        table.outlineTableColumn = table.tableColumns.first
+        table.indentationPerLevel = 24
+        table.rowHeight = 30
+        table.controlSize = .large
         table.usesAlternatingRowBackgroundColors = true
         table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         table.target = self
@@ -107,10 +168,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         item.autovalidates = false
         return item
     }
-    private var selected: RemoteEntry? {
-        guard let directory, directory.entries.indices.contains(table.selectedRow) else { return nil }
-        return directory.entries[table.selectedRow]
-    }
+    private var selectedNode: FileNode? { table.item(atRow: table.selectedRow) as? FileNode }
+    private var selected: RemoteEntry? { selectedNode?.entry }
     private func enabled(_ action: Selector?) -> Bool {
         if action == #selector(cancel(_:)) { return busy }
         if busy { return false }
@@ -133,19 +192,56 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         pathField.stringValue = directory.map { String(decoding: $0.path, as: UTF8.self) } ?? ""
         if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
     }
-    func numberOfRows(in tableView: NSTableView) -> Int { directory?.entries.count ?? 0 }
-    func tableViewSelectionDidChange(_ notification: Notification) { updateControls() }
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let entry = directory?.entries[row] else { return nil }
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        (item as? FileNode)?.children?.count ?? (item == nil ? roots.count : 0)
+    }
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        if let node = item as? FileNode { return node.children![index] }
+        return roots[index]
+    }
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        guard let node = item as? FileNode else { return false }
+        return node.entry.attributes.isDirectory && (node.children?.isEmpty != true)
+    }
+    func outlineView(_ outlineView: NSOutlineView, shouldExpandItem item: Any) -> Bool {
+        guard let node = item as? FileNode else { return false }
+        if completingExpansion { return true }
+        guard !busy else { return false }
+        if node.children != nil { return true }
+        runOperation("Loading \(node.entry.name)…") { [self] signal in
+            let result = try await browser.directory(node.path, cancellation: signal)
+            node.children = result.entries.map { FileNode($0, parent: result.path) }
+            table.reloadItem(node, reloadChildren: true)
+            completingExpansion = true
+            table.expandItem(node)
+            completingExpansion = false
+            status.stringValue = node.children!.isEmpty ? "\(node.entry.name) is empty." : "\(node.children!.count) items in \(node.entry.name)"
+        }
+        return false
+    }
+    func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool { !busy }
+    func outlineViewSelectionDidChange(_ notification: Notification) { updateControls() }
+    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+        guard let node = item as? FileNode else { return nil }
+        let entry = node.entry
         let value: String
         switch tableColumn?.identifier.rawValue {
         case "size": value = entry.attributes.isDirectory ? "—" : entry.attributes.size.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) } ?? "—"
         case "modified": value = entry.attributes.modified.map { DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .short) } ?? "—"
-        default: value = (entry.attributes.isDirectory ? "▸  " : "") + entry.name.replacingOccurrences(of: "\n", with: "↵")
+        default: value = entry.name.replacingOccurrences(of: "\n", with: "↵")
         }
-        let cell = NSTextField(labelWithString: value)
-        cell.lineBreakMode = .byTruncatingMiddle
+        let cell = NSTableCellView()
+        let label = NSTextField(labelWithString: value)
+        label.lineBreakMode = .byTruncatingMiddle
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(label)
+        cell.textField = label
         cell.toolTip = entry.name
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+        ])
         return cell
     }
     private func runOperation(_ message: String, operation: @escaping @MainActor (SFTPCancellation) async throws -> Void) {
@@ -161,6 +257,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
             catch {
                 activeSettings = nil
                 directory = nil
+                roots = []
                 table.reloadData()
                 window?.title = "Retriever"
                 if error is CancellationError { status.stringValue = "Cancelled. Disconnected." }
@@ -179,6 +276,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
     }
     private func show(_ result: RemoteDirectory) {
         directory = result
+        roots = result.entries.map { FileNode($0, parent: result.path) }
         if let activeSettings { history.updateLocation(result.path, for: activeSettings) }
         table.deselectAll(nil)
         table.reloadData()
@@ -205,8 +303,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         if enabled(#selector(goUp(_:))), let directory { navigate(SFTPSession.appending(Data("..".utf8), to: directory.path)) }
     }
     @objc func openSelected(_ sender: Any?) {
-        guard !busy, let selected, let directory else { return }
-        if selected.attributes.isDirectory { navigate(SFTPSession.appending(selected.nameBytes, to: directory.path)) }
+        guard !busy, let node = selectedNode else { return }
+        if node.entry.attributes.isDirectory { navigate(node.path) }
         else { downloadSelected(sender) }
     }
     @objc func downloadSelected(_ sender: Any?) {
@@ -222,9 +320,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
         }
     }
     func retrieveSelection(to destination: URL) {
-        guard enabled(#selector(downloadSelected(_:))), let selected, let directory else { return }
+        guard enabled(#selector(downloadSelected(_:))), let selected, let node = selectedNode else { return }
         runOperation("Downloading \(selected.name)…") { [self] signal in
-            try await browser.download(SFTPSession.appending(selected.nameBytes, to: directory.path), to: destination, cancellation: signal) { [weak self] bytes in
+            try await browser.download(node.path, to: destination, cancellation: signal) { [weak self] bytes in
                 Task { @MainActor [weak self] in
                     guard let self, busy, cancellation === signal else { return }
                     let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
@@ -244,6 +342,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSTable
             await browser.disconnect()
             activeSettings = nil
             directory = nil
+            roots = []
             table.reloadData()
             window?.title = "Retriever"
             status.stringValue = "Not connected"

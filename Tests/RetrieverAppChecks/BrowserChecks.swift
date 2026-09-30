@@ -40,8 +40,43 @@ struct BrowserChecks {
         connect.performClick(nil)
         guard let table = descendants(window.contentView!).compactMap({ $0 as? NSTableView }).first else { fatalError("Missing file table") }
         waitUntil("Authenticated file listing") { !controller.busy && table.numberOfRows == 2 }
-        let folder = table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? NSTextField
-        precondition(folder?.stringValue.contains("Empty folder") == true)
+        let folder = table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? NSTableCellView
+        precondition(folder?.textField?.stringValue.contains("Empty folder") == true)
+        let outline = table as! NSOutlineView
+        let emptyFolder = root.appendingPathComponent("files/Empty folder")
+        let nestedFolder = emptyFolder.appendingPathComponent("Nested")
+        try FileManager.default.createDirectory(at: nestedFolder, withIntermediateDirectories: true)
+        let nestedData = Data("Nested file retrieval".utf8)
+        try nestedData.write(to: nestedFolder.appendingPathComponent("nested.txt"))
+        let rootPath = history.hosts[0].lastPath
+        let parentItem = outline.item(atRow: 0)!
+        let disclosure = descendants(outline.rowView(atRow: 0, makeIfNecessary: true)!).compactMap { $0 as? NSButton }.first { $0.identifier == NSOutlineView.disclosureButtonIdentifier }!
+        disclosure.performClick(nil)
+        waitUntil("Inline folder expansion") { !controller.busy && outline.numberOfRows == 3 }
+        let nestedItem = outline.item(atRow: 1)!
+        outline.expandItem(nestedItem)
+        waitUntil("Nested expansion") { !controller.busy && outline.numberOfRows == 4 }
+        precondition(history.hosts[0].lastPath == rootPath, "Expansion must not change the root location")
+        precondition(outline.frameOfOutlineCell(atRow: 0).width >= 20)
+        table.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
+        let nestedDestination = root.appendingPathComponent("nested-download.txt")
+        controller.retrieveSelection(to: nestedDestination)
+        waitUntil("Nested file download") { !controller.busy && FileManager.default.fileExists(atPath: nestedDestination.path) }
+        let nestedActual = try Data(contentsOf: nestedDestination)
+        precondition(nestedActual == nestedData)
+        try capture(window)
+        try Data(contentsOf: URL(fileURLWithPath: "artifacts/verification/authenticated-browser-content.png")).write(to: URL(fileURLWithPath: "artifacts/verification/expanded-tree.png"))
+        disclosure.performClick(nil)
+        precondition(outline.numberOfRows == 2)
+        outline.expandItem(parentItem)
+        precondition(!controller.busy && outline.numberOfRows >= 3, "Loaded folders reopen immediately")
+        try FileManager.default.removeItem(at: nestedFolder)
+        controller.refresh(nil)
+        waitUntil("Refresh resets tree") { !controller.busy && outline.numberOfRows == 2 }
+        let refreshedFolder = outline.item(atRow: 0)!
+        outline.expandItem(refreshedFolder)
+        waitUntil("Empty expansion") { !controller.busy && !outline.isExpandable(refreshedFolder) }
+        precondition(outline.numberOfRows == 2)
         try capture(window)
         let screenshot = Process()
         screenshot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")

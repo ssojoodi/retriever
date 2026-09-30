@@ -47,6 +47,8 @@ def main():
             files = Path(agent_directory) / 'files'
             files.mkdir()
             (files / 'Empty folder').mkdir()
+            (files / 'Examples/Nested').mkdir(parents=True)
+            (files / 'Examples/Nested/nested-test.txt').write_text('Retrieved from an expanded folder.\n')
             (files / 'retriever-test.txt').write_text('Retrieved successfully with Retriever.\n')
             with socket.socket() as probe:
                 probe.bind(('127.0.0.1', 0))
