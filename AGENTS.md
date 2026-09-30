@@ -25,7 +25,7 @@ Shared version and signing settings live in `Config/Signing.xcconfig`. Local cre
 - Preserve user work and avoid unrelated changes.
 - Add focused tests for independently fallible behavior.
 - Verify UI changes in the actual built app and inspect screenshot evidence.
-- Keep credentials local, plans tracked, generated output isolated.
+- Keep credentials and iteration plans local; docs/ is ignored. Keep generated output isolated.
 - Keep commands and this memory current as architecture changes.
 - Create a new timestamped plan for every iteration. Commit finished milestones with short messages.
 
