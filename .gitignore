@@ -8,7 +8,7 @@ xcuserdata/
 release.env
 Config/LocalSigning.xcconfig
 artifacts/verification/
-docs/dmg-backups/
+docs/
 dist/
 
 web-page/Retriever.dmg.sha256
