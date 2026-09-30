@@ -29,7 +29,7 @@ No license has been selected.
 
 The SFTP core uses `/usr/bin/ssh`; new hosts require explicit confirmation and changed host keys remain rejected. No remote shell commands are constructed. Core integration tests launch `/usr/libexec/sftp-server` locally against temporary fixtures; they need no network or server credentials. Downloads preserve existing destination files. SSH error sheets include bounded diagnostic details. Interactive authentication uses the app executable as a native SSH askpass helper. Headless core callers retain strict batch mode.
 
-The approved icon artwork is `Brand/Retriever-Logo-Approved.png`; `Brand/RenderIcon.swift` resizes it without changing its composition. Run `make assets` to regenerate all ten macOS icon slots (16 through 1024 pixels). Generated PNGs are tracked, so fresh checkouts build directly in Xcode without first running the renderer.
+The approved icon artwork is `Brand/Retriever-Logo-Approved.png`; `Brand/Retriever-AppIcon.png` is its app-icon cutout with transparency outside the rounded tile. `Brand/RenderIcon.swift` resizes that cutout while preserving alpha. Run `make assets` to regenerate all ten macOS icon slots (16 through 1024 pixels). Generated PNGs are tracked, so fresh checkouts build directly in Xcode without first running the renderer.
 
 `make check-ssh` verifies real authenticated SSH transfers and rejection of unknown/changed host keys and unauthorized client keys. It uses installed macOS sshd, Python 3 and disposable test keys on a loopback-only port. It does not alter your SSH configuration. The fixture server and temporary credentials are cleaned up on exit. This transport check is separate from the controller checks and the manually verified packaged-app download.
 

@@ -1,7 +1,7 @@
 import AppKit
 
-// The approved artwork is authoritative. Preserve its composition and background.
-let sourceURL = URL(fileURLWithPath: "Brand/Retriever-Logo-Approved.png")
+// The app-icon cutout preserves the approved artwork with a transparent outer background.
+let sourceURL = URL(fileURLWithPath: "Brand/Retriever-AppIcon.png")
 guard let source = NSImage(contentsOf: sourceURL), source.size.width == source.size.height else {
     fatalError("Expected square approved artwork at \(sourceURL.path)")
 }
@@ -12,6 +12,7 @@ func drawIcon(size: Int) -> NSBitmapImageRep {
     let context = NSGraphicsContext(bitmapImageRep: bitmap)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = context
+    context.cgContext.clear(CGRect(x: 0, y: 0, width: size, height: size))
     context.imageInterpolation = .high
     source.draw(in: NSRect(x: 0, y: 0, width: size, height: size),
                 from: .zero, operation: .copy, fraction: 1)
