@@ -11,18 +11,6 @@ const fs = require('node:fs');
     const response=await page.goto('http://127.0.0.1:8105/',{waitUntil:'networkidle'});
     assert.equal(response.status(),200);
     const manifest=await (await page.request.get('http://127.0.0.1:8105/release.json')).json();
-    const expected=await page.evaluate(()=>({...document.documentElement.dataset}));
-    assert.equal(expected.releaseVersion, '0.2.0');
-    assert.equal(expected.releaseBuild, '3');
-    // Simulate the previous release, then the prepared release, without editing artifacts.
-    await page.route('**/release.json', route=>route.fulfill({json:{...manifest,version:'0.1.0',build:'2'}}));
-    await page.reload({waitUntil:'networkidle'});
-    assert.equal(await page.locator('[data-download]').first().isVisible(),false);
-    assert.equal(await page.locator('[data-pending]').first().isVisible(),true);
-    await page.screenshot({path:'artifacts/verification/website-prepared.png',fullPage:true});
-    await page.unroute('**/release.json');
-    await page.route('**/release.json', route=>route.fulfill({json:{...manifest,version:expected.releaseVersion,build:expected.releaseBuild}}));
-    await page.reload({waitUntil:'networkidle'});
     await page.locator('[data-download]').first().waitFor({state:'visible'});
     assert.equal(await page.title(),'Retriever — SFTP for macOS');
     assert.equal(await page.locator('[data-download]').first().getAttribute('href'),'Retriever.dmg');
@@ -38,8 +26,10 @@ const fs = require('node:fs');
     await page.waitForLoadState('networkidle');
     assert.equal(await page.title(),'Release notes — Retriever for macOS');
     await page.locator('[data-download]').waitFor({state:'visible'});
-    assert.equal(await page.locator('[data-latest-release-label]').textContent(),'Available now');
+    assert.equal(await page.locator('[data-latest-release-label]').textContent(),'Published');
     assert.equal(await page.locator('#v0-2-0').count(),1);
+    assert.equal(await page.locator('#v0-2-0 time').getAttribute('datetime'),'2026-09-29');
+    assert.equal(await page.locator('#v0-2-0 time').textContent(),'September 29, 2026');
     assert.equal(await page.locator('#v0-1-0').count(),1);
     const screenshots = page.locator('#v0-2-0 .release-screenshot img');
     assert.equal(await screenshots.count(), 4);
@@ -68,23 +58,30 @@ const fs = require('node:fs');
     assert.equal(require('node:crypto').createHash('sha256').update(bytes).digest('hex'),manifest.sha256);
     fs.writeFileSync('.build/web-audit/downloaded-Retriever.dmg',bytes);
     assert.equal(require('node:crypto').createHash('sha256').update(fs.readFileSync('.build/web-audit/clicked-Retriever.dmg')).digest('hex'),manifest.sha256);
-    await page.unroute('**/release.json');
-    await page.route('**/release.json', route=>route.fulfill({json:{...manifest,version:expected.releaseVersion,build:'2'}}));
-    await page.goto('http://127.0.0.1:8105/release-notes.html',{waitUntil:'networkidle'});
-    assert.equal(await page.locator('[data-download]').isVisible(),false);
-    assert.equal(await page.locator('[data-latest-release-label]').textContent(),'Upcoming release');
-    await page.unroute('**/release.json');
-    await page.route('**/Retriever.dmg', route=>route.fulfill({status:404,body:''}));
-    await page.route('**/release.json', route=>route.fulfill({json:{...manifest,version:expected.releaseVersion,build:expected.releaseBuild}}));
-    await page.reload({waitUntil:'networkidle'});
-    assert.equal(await page.locator('[data-download]').isVisible(),false);
-    await page.unroute('**/Retriever.dmg');
-    await page.unroute('**/release.json');
-    await page.route('**/release.json', route=>route.fulfill({status:404,body:''}));
-    await page.goto('http://127.0.0.1:8105/',{waitUntil:'networkidle'});
-    assert.equal(await page.locator('[data-download]').first().isVisible(),false);
-    assert.equal(await page.locator('[data-pending]').first().isVisible(),true);
+    for (const response of [
+      {json:{...manifest,version:'0.1.0',build:'2'}},
+      {status:404,body:''},
+      {json:{invalid:true}}
+    ]) {
+      await page.route('**/release.json', route=>route.fulfill(response));
+      for (const path of ['/', '/release-notes.html']) {
+        await page.goto('http://127.0.0.1:8105'+path,{waitUntil:'networkidle'});
+        assert.equal(await page.locator('[data-download]').first().isVisible(),true);
+        assert.equal(await page.locator('[data-download]').first().getAttribute('href'),'Retriever.dmg');
+      }
+      await page.unroute('**/release.json');
+    }
+    const noScript = await browser.newContext({javaScriptEnabled:false});
+    const plainPage = await noScript.newPage();
+    for (const path of ['/', '/release-notes.html']) {
+      await plainPage.goto('http://127.0.0.1:8105'+path);
+      assert.equal(await plainPage.locator('[data-download]').first().isVisible(),true);
+      assert.equal(await plainPage.locator('[data-download]').first().getAttribute('href'),'Retriever.dmg');
+    }
+    const [plainDownload] = await Promise.all([plainPage.waitForEvent('download'), plainPage.locator('[data-download]').first().click()]);
+    assert.equal(plainDownload.suggestedFilename(),'Retriever.dmg');
+    await noScript.close();
     assert.deepEqual(errors,[]);
-    console.log('PASS: desktop/mobile routes, links, old/missing/current manifest gating, no page errors; simulated '+expected.releaseVersion+' ('+expected.releaseBuild+') availability. Existing DMG checksum verified: '+manifest.version+' ('+manifest.build+').');
+    console.log('PASS: desktop/mobile layouts, screenshots, Sep 29 release date, direct downloads with old/missing/invalid metadata and JavaScript disabled, and artifact checksum.');
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});
