@@ -11,7 +11,7 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 - Successful hosts (server, username, port) and the last visited remote folder persist locally in UserDefaults. Selection remains transient; do not connect automatically on launch. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
 - Direct Developer ID distribution, separately signed and notarized DMG. Universal arm64/x86_64 Release compilation and binary slices verified. Intel runtime remains untested.
 - Initial non-goals: FTP, uploads, remote deletion, synchronization, tabs, named bookmarks, App Store. A static download website is now maintained in `web-page/`.
-- No license grant selected yet; do not copy a reference project's license.
+- MIT licensed; see LICENSE. Copyright 2026 Sahand Sojoodi. Public repository: https://github.com/ssojoodi/retriever.
 
 ## Layout and commands
 Xcode is authoritative. `Sources/RetrieverApp` owns UI; `Sources/RetrieverCore` owns testable connection and transfer behavior; `Tests/RetrieverCoreTests` owns XCTest cases. Explicit project membership is required for new files.
