@@ -238,7 +238,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         cell.textField = label
         cell.toolTip = entry.name
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: tableColumn?.identifier.rawValue == "name" ? 2 : 0),
             label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
         ])
