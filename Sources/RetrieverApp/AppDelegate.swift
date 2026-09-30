@@ -4,6 +4,14 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var helpPanel: NSPanel?
     private var controller: MainWindowController?
+    @objc func showAbout(_ sender: Any?) {
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: url) {
+            options[.applicationIcon] = icon
+        }
+        NSApp.orderFrontStandardAboutPanel(options: options)
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller = MainWindowController()
         controller?.showWindow(nil)

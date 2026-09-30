@@ -12,7 +12,7 @@ enum AppMenu {
             return menu
         }
         let app = submenu("Retriever")
-        app.addItem(withTitle: "About Retriever", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(withTitle: "About Retriever", action: #selector(AppDelegate.showAbout(_:)), keyEquivalent: "")
         app.addItem(.separator())
         let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
         let services = NSMenu(title: "Services")
