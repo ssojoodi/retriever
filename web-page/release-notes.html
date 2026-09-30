@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-release-version="0.2.0" data-release-build="3">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Release notes — Retriever for macOS</title>
@@ -10,9 +10,19 @@
 <body class="release-page">
   <a class="skip-link" href="#main">Skip to content</a>
   <div class="page-shell"><nav class="topbar" aria-label="Main navigation"><a class="brand" href="./"><img src="app-icon.png" width="512" height="512" alt=""><span>Retriever</span></a><a href="./">Back to Retriever</a></nav>
-    <header class="release-header"><p class="eyebrow">What’s new</p><h1>Release notes.</h1><p class="lede">A simple way to bring files home from your server.</p><p data-release-status>The first public download is being prepared.</p></header>
+    <header class="release-header"><p class="eyebrow">What’s new</p><h1>Release notes.</h1><p class="lede">A simple way to bring files home from your server.</p><p data-release-status>Version 0.2.0 is being prepared.</p></header>
   </div>
-  <main id="main" class="page-shell release-list"><article class="release" id="v0-1-0">
+  <main id="main" class="page-shell release-list"><article class="release" id="v0-2-0">
+    <div class="release-meta"><span class="release-version">Version 0.2.0</span><span data-latest-release-label>Upcoming release</span><a class="release-permalink" href="#v0-2-0">Link to this version</a></div>
+    <div class="release-content"><h2>Pick up where you left off.</h2><p class="release-intro">Return to saved servers, expand folders in place, and preview files before downloading.</p>
+      <div class="release-change"><h3>Saved hosts and folders</h3><ul><li>Successful connections are saved automatically with each host’s last visited folder.</li><li>Choose a saved host in Open Connection, edit its starting folder, or use Forget to remove it.</li><li>If a saved folder is unavailable, Retriever opens the server’s home folder and shows a notice.</li><li>Passwords are never saved. Retriever does not connect automatically when it starts.</li></ul></div>
+      <div class="release-change"><h3>Browse an expandable file tree</h3><ul><li>Click a folder’s arrow to expand or collapse it within the file list.</li><li>Browse nested folders and download their files without leaving the current directory.</li><li>Larger disclosure arrows and vertically centered labels make rows easier to read.</li></ul></div>
+      <div class="release-change"><h3>Preview from the context menu</h3><ul><li>Right-click a file for Download or Preview.</li><li>Download opens the existing macOS Save dialog.</li><li>Preview retrieves a temporary copy and displays it in native Quick Look.</li><li>Temporary preview files are removed when the preview closes, is replaced, or the app quits. Preview downloads can be cancelled.</li></ul></div>
+      <div class="release-change"><h3>A consistent app icon</h3><ul><li>The Dock and About panel show the Retriever icon with a rounded tile and transparent outer corners.</li></ul></div>
+      <p class="body-copy">Requires macOS 14 or later. FTP, uploads, folder downloads, and symbolic-link downloads remain unsupported.</p>
+    </div>
+  </article>
+  <article class="release" id="v0-1-0">
     <div class="release-meta"><span class="release-version">Version 0.1.0</span><span>Initial version</span><a class="release-permalink" href="#v0-1-0">Link to this version</a></div>
     <div class="release-content"><h2>Meet Retriever.</h2><p class="release-intro">A native Mac app for connecting to an SFTP server, browsing its folders, and downloading individual files.</p>
       <div class="release-change"><h3>Connect and browse</h3><ul><li>Connect using SSH keys, an SSH agent, or a password.</li><li>Verify a new server’s fingerprint before connecting.</li><li>Navigate folders and view file names, sizes, and modification dates.</li></ul></div>
