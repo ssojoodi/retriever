@@ -54,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Compare the displayed fingerprint with one provided by the server administrator before choosing Trust and Connect. Cancel if it does not match. Accepted keys are saved in SSH known_hosts. A changed key is rejected.
 
         Browse and retrieve
-        Double-click a folder to open it. Use Up (⌘[) to return to the enclosing folder or Refresh (⌘R) to reload. Select a regular file and choose Download (⌘D). Choose a new local filename; existing files are preserved. Folder and symbolic-link downloads are not supported yet.
+        Click a folder’s arrow to expand it inline, or double-click to open it. Use Up (⌘[) to return to the enclosing folder or Refresh (⌘R) to reload. Select a regular file and choose Download (⌘D). Right-click a file for Download or Preview. Preview opens a temporary copy in Quick Look; closing it removes the copy. Choose a new local filename; existing files are preserved. Folder and symbolic-link downloads are not supported yet.
 
         Cancel and disconnect
         Cancel (⌘.) stops the current operation, closes the connection and removes partial downloads. Disconnect ends an idle connection. Closing or quitting during work asks whether to cancel first.
@@ -75,5 +75,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let canQuit = controller.requestClose { NSApp.terminate(nil) }
         return canQuit ? .terminateNow : .terminateCancel
     }
+    func applicationWillTerminate(_ notification: Notification) { controller?.closePreview() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }

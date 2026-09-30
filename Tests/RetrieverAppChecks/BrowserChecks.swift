@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 @testable import RetrieverCore
 
 @main
@@ -64,6 +65,51 @@ struct BrowserChecks {
         waitUntil("Nested file download") { !controller.busy && FileManager.default.fileExists(atPath: nestedDestination.path) }
         let nestedActual = try Data(contentsOf: nestedDestination)
         precondition(nestedActual == nestedData)
+        func contextMenu(row: Int) -> NSMenu? {
+            let rect = table.rect(ofRow: row)
+            let location = table.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+            let event = NSEvent.mouseEvent(with: .rightMouseDown, location: location, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            let menu = table.menu(for: event)
+            menu?.update()
+            return menu
+        }
+        let blankLocation = table.convert(NSPoint(x: 20, y: table.bounds.maxY - 4), to: nil)
+        let blankEvent = NSEvent.mouseEvent(with: .rightMouseDown, location: blankLocation, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        precondition(table.menu(for: blankEvent) == nil, "Empty space must not act on the prior selection")
+        let folderMenu = contextMenu(row: 0)!
+        precondition(folderMenu.items.map(\.title) == ["Download", "Preview"])
+        precondition(folderMenu.items.allSatisfy { !$0.isEnabled }, "Folders cannot be downloaded or previewed")
+        let fileMenu = contextMenu(row: 2)!
+        precondition(table.selectedRow == 2 && fileMenu.items.allSatisfy(\.isEnabled), "Right click must target the pointed file")
+        fileMenu.performActionForItem(at: 0)
+        waitUntil("Context Download uses save panel") { window.attachedSheet is NSSavePanel }
+        (window.attachedSheet as! NSSavePanel).cancel(nil)
+        waitUntil("Context save cancellation") { window.attachedSheet == nil }
+        fileMenu.performActionForItem(at: 1)
+        precondition(contextMenu(row: 0) == nil, "Busy tree must not retarget a context action")
+        waitUntil("Nested Quick Look preview") { !controller.busy && NSApp.windows.contains { $0.title == "nested.txt" && $0.isVisible } }
+        let previewPanel = NSApp.windows.first { $0.title == "nested.txt" && $0.isVisible }!
+        let preview = previewPanel.contentView as! QLPreviewView
+        let previewURL = preview.previewItem.previewItemURL!
+        let previewBytes = try Data(contentsOf: previewURL)
+        precondition(previewBytes == nestedData, "Preview must fetch the pointed nested file")
+        let previewFolder = previewURL.deletingLastPathComponent()
+        precondition(history.hosts[0].lastPath == rootPath)
+        for _ in 0..<15 { pump() }
+        let previewShot = Process()
+        previewShot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        previewShot.arguments = ["-x", "-D", "1", "artifacts/verification/file-preview.png"]
+        try previewShot.run()
+        previewShot.waitUntilExit()
+        fileMenu.performActionForItem(at: 1)
+        waitUntil("Replacement preview") { !controller.busy && !previewPanel.isVisible }
+        precondition(!FileManager.default.fileExists(atPath: previewFolder.path), "Replacing preview removes its previous temporary file")
+        let replacement = NSApp.windows.first { $0.title == "nested.txt" && $0.isVisible }!
+        let replacementURL = (replacement.contentView as! QLPreviewView).previewItem.previewItemURL!
+        replacement.performClose(nil)
+        precondition(!FileManager.default.fileExists(atPath: replacementURL.deletingLastPathComponent().path))
+        precondition(!FileManager.default.fileExists(atPath: previewFolder.path), "Closing preview removes temporary files")
+        precondition(table.numberOfRows == 4 && window.title == "127.0.0.1 — Retriever", "Closing preview must preserve the connection")
         try capture(window)
         try Data(contentsOf: URL(fileURLWithPath: "artifacts/verification/authenticated-browser-content.png")).write(to: URL(fileURLWithPath: "artifacts/verification/expanded-tree.png"))
         disclosure.performClick(nil)
@@ -152,6 +198,22 @@ struct BrowserChecks {
         waitUntil("Error dismissal") { window.attachedSheet == nil }
         pump()
         precondition(!download.isEnabled && open.isEnabled, "Failure must allow reconnect and disable download")
+        controller.openConnection(nil)
+        waitUntil("Reconnect for preview cancellation") { window.attachedSheet != nil }
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Connect" }!.performClick(nil)
+        waitUntil("Connected for preview cancellation") { !controller.busy && table.numberOfRows == 2 }
+        let temporary = FileManager.default.temporaryDirectory
+        func previewFolders() throws -> Set<String> {
+            Set(try FileManager.default.contentsOfDirectory(atPath: temporary.path).filter { $0.hasPrefix("Retriever-preview-") })
+        }
+        let existingPreviews = try previewFolders()
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        controller.previewSelected(nil)
+        controller.cancel(nil)
+        waitUntil("Cancelled preview") { !controller.busy && window.title == "Retriever" }
+        let remainingPreviews = try previewFolders()
+        precondition(remainingPreviews == existingPreviews, "Cancellation must remove temporary preview files")
+        precondition(!NSApp.windows.contains { $0.isVisible && $0.contentView is QLPreviewView })
         controller.disconnect(nil)
         waitUntil("Disconnect") { !controller.busy && table.numberOfRows == 0 }
         controller.openConnection(nil)

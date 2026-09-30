@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 import RetrieverCore
 
 @MainActor
@@ -31,6 +32,14 @@ private final class FolderDisclosureButton: NSButton {
 
 @MainActor
 private final class FileOutlineView: NSOutlineView {
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard isEnabled, window?.attachedSheet == nil else { return nil }
+        let clickedRow = row(at: convert(event.locationInWindow, from: nil))
+        guard clickedRow >= 0 else { return nil }
+        selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
+        return menu
+    }
+
     override func makeView(withIdentifier identifier: NSUserInterfaceItemIdentifier, owner: Any?) -> NSView? {
         if identifier == NSOutlineView.disclosureButtonIdentifier {
             let button = FolderDisclosureButton(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
@@ -63,6 +72,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private let history: ConnectionHistory
     private var activeSettings: ConnectionSettings?
     private var connectionSheet: ConnectionSheet?
+    private var previewPanel: NSPanel?
+    private var previewDirectory: URL?
     private let status = NSTextField(labelWithString: "Not connected")
     private let pathField = NSTextField(labelWithString: "")
     private let table = FileOutlineView()
@@ -110,6 +121,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         table.target = self
         table.doubleAction = #selector(openSelected(_:))
         table.setAccessibilityLabel("Remote files")
+        let contextMenu = NSMenu()
+        for (title, action, symbol) in [
+            ("Download", #selector(downloadSelected(_:)), "arrow.down.circle"),
+            ("Preview", #selector(previewSelected(_:)), "eye")
+        ] {
+            let item = contextMenu.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        }
+        table.menu = contextMenu
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
@@ -177,7 +198,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         case #selector(openConnection(_:)): return true
         case #selector(goUp(_:)): return directory != nil && directory?.path != Data("/".utf8)
         case #selector(refresh(_:)), #selector(disconnect(_:)): return directory != nil
-        case #selector(downloadSelected(_:)): return selected.map { !$0.attributes.isDirectory && !$0.attributes.isSymbolicLink } ?? false
+        case #selector(downloadSelected(_:)), #selector(previewSelected(_:)): return selected.map { !$0.attributes.isDirectory && !$0.attributes.isSymbolicLink } ?? false
         case #selector(openSelected(_:)): return selected != nil
         default: return false
         }
@@ -332,6 +353,49 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             status.stringValue = "Downloaded to \(destination.path)"
         }
     }
+    @objc func previewSelected(_ sender: Any?) {
+        guard enabled(#selector(previewSelected(_:))), let node = selectedNode else { return }
+        runOperation("Preparing preview of \(node.entry.name)…") { [self] signal in
+            let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("Retriever-preview-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            var presented = false
+            defer { if !presented { try? FileManager.default.removeItem(at: temporary) } }
+            let filename = node.entry.name.replacingOccurrences(of: "/", with: "_")
+            let destination = temporary.appendingPathComponent(filename)
+            try await browser.download(node.path, to: destination, cancellation: signal) { [weak self] bytes in
+                Task { @MainActor [weak self] in
+                    guard let self, busy, cancellation === signal else { return }
+                    let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+                    status.stringValue = "Preparing preview — \(count) received"
+                }
+            }
+            closePreview()
+            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 720, height: 540), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            panel.title = node.entry.name
+            panel.minSize = NSSize(width: 360, height: 260)
+            panel.isReleasedWhenClosed = false
+            panel.delegate = self
+            let preview = QLPreviewView(frame: panel.contentView!.bounds, style: .normal)!
+            preview.autoresizingMask = [.width, .height]
+            preview.previewItem = destination as NSURL
+            panel.contentView = preview
+            previewDirectory = temporary
+            previewPanel = panel
+            presented = true
+            panel.center()
+            panel.makeKeyAndOrderFront(nil)
+            status.stringValue = "Previewing \(node.entry.name)"
+        }
+    }
+    func closePreview() {
+        guard let panel = previewPanel else { return }
+        previewPanel = nil
+        panel.delegate = nil
+        (panel.contentView as? QLPreviewView)?.close()
+        panel.close()
+        if let previewDirectory { try? FileManager.default.removeItem(at: previewDirectory) }
+        previewDirectory = nil
+    }
     @objc func cancel(_ sender: Any?) {
         cancellation?.cancel()
         if busy { status.stringValue = "Cancelling…" }
@@ -366,9 +430,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         return false
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        requestClose { [weak sender] in sender?.performClose(nil) }
+        if sender === previewPanel { return true }
+        return requestClose { [weak sender] in sender?.performClose(nil) }
     }
     func windowWillClose(_ notification: Notification) {
+        if notification.object as? NSWindow === previewPanel { closePreview(); return }
+        closePreview()
         let browser = browser
         Task { await browser.disconnect() }
     }
