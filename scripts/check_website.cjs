@@ -31,7 +31,9 @@ const fs = require('node:fs');
     assert.equal(await page.locator('#v0-2-0 time').getAttribute('datetime'),'2026-10-01');
     assert.equal(await page.locator('#v0-2-0 time').textContent(),'October 1, 2026');
     assert.equal(await page.locator('#v0-1-0').count(),1);
-    const screenshots = page.locator('#v0-2-0 .release-screenshot img');
+    assert.equal(await page.locator('#v0-1-0-update time').getAttribute('datetime'),'2026-09-29');
+    assert.equal(await page.locator('#v0-2-0 .release-screenshot').count(),0);
+    const screenshots = page.locator('#v0-1-0-update .release-screenshot img');
     assert.equal(await screenshots.count(), 4);
     for (const screenshot of await screenshots.all()) {
       await screenshot.scrollIntoViewIfNeeded();
