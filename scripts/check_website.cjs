@@ -28,8 +28,8 @@ const fs = require('node:fs');
     await page.locator('[data-download]').waitFor({state:'visible'});
     assert.equal(await page.locator('[data-latest-release-label]').textContent(),'Published');
     assert.equal(await page.locator('#v0-2-0').count(),1);
-    assert.equal(await page.locator('#v0-2-0 time').getAttribute('datetime'),'2026-09-29');
-    assert.equal(await page.locator('#v0-2-0 time').textContent(),'September 29, 2026');
+    assert.equal(await page.locator('#v0-2-0 time').getAttribute('datetime'),'2026-10-01');
+    assert.equal(await page.locator('#v0-2-0 time').textContent(),'October 1, 2026');
     assert.equal(await page.locator('#v0-1-0').count(),1);
     const screenshots = page.locator('#v0-2-0 .release-screenshot img');
     assert.equal(await screenshots.count(), 4);
@@ -82,6 +82,6 @@ const fs = require('node:fs');
     assert.equal(plainDownload.suggestedFilename(),'Retriever.dmg');
     await noScript.close();
     assert.deepEqual(errors,[]);
-    console.log('PASS: desktop/mobile layouts, screenshots, Sep 29 release date, direct downloads with old/missing/invalid metadata and JavaScript disabled, and artifact checksum.');
+    console.log('PASS: desktop/mobile layouts, screenshots, Oct 1 release date, direct downloads with old/missing/invalid metadata and JavaScript disabled, and artifact checksum.');
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});
