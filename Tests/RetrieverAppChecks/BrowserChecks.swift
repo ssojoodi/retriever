@@ -22,7 +22,8 @@ struct BrowserChecks {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let history = ConnectionHistory(defaults: defaults)
-        let controller = MainWindowController(browser: browser, history: history)
+        let downloads = DownloadHistory(defaults: defaults)
+        let controller = MainWindowController(browser: browser, history: history, downloads: downloads)
         let window = controller.window!
         controller.showWindow(nil)
         window.makeKeyAndOrderFront(nil)
@@ -54,8 +55,14 @@ struct BrowserChecks {
         let disclosure = descendants(outline.rowView(atRow: 0, makeIfNecessary: true)!).compactMap { $0 as? NSButton }.first { $0.identifier == NSOutlineView.disclosureButtonIdentifier }!
         disclosure.performClick(nil)
         waitUntil("Inline folder expansion") { !controller.busy && outline.numberOfRows == 3 }
-        let nestedItem = outline.item(atRow: 1)!
-        outline.expandItem(nestedItem)
+        precondition(window.firstResponder === outline, "Disclosure click must return focus to the outline")
+        func key(_ code: UInt16, _ characters: String, window target: NSWindow = window) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: target.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
+        }
+        outline.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        outline.keyDown(with: key(125, "\u{f701}"))
+        precondition(outline.selectedRow == 1, "Down arrow must select after expansion")
+        outline.keyDown(with: key(124, "\u{f703}"))
         waitUntil("Nested expansion") { !controller.busy && outline.numberOfRows == 4 }
         precondition(history.hosts[0].lastPath == rootPath, "Expansion must not change the root location")
         precondition(outline.frameOfOutlineCell(atRow: 0).width >= 20)
@@ -85,7 +92,7 @@ struct BrowserChecks {
         waitUntil("Context Download uses save panel") { window.attachedSheet is NSSavePanel }
         (window.attachedSheet as! NSSavePanel).cancel(nil)
         waitUntil("Context save cancellation") { window.attachedSheet == nil }
-        fileMenu.performActionForItem(at: 1)
+        table.keyDown(with: key(49, " "))
         precondition(contextMenu(row: 0) == nil, "Busy tree must not retarget a context action")
         waitUntil("Nested Quick Look preview") { !controller.busy && NSApp.windows.contains { $0.title == "nested.txt" && $0.isVisible } }
         let previewPanel = NSApp.windows.first { $0.title == "nested.txt" && $0.isVisible }!
@@ -106,7 +113,7 @@ struct BrowserChecks {
         precondition(!FileManager.default.fileExists(atPath: previewFolder.path), "Replacing preview removes its previous temporary file")
         let replacement = NSApp.windows.first { $0.title == "nested.txt" && $0.isVisible }!
         let replacementURL = (replacement.contentView as! QLPreviewView).previewItem.previewItemURL!
-        replacement.performClose(nil)
+        replacement.sendEvent(key(53, "\u{1b}", window: replacement))
         precondition(!FileManager.default.fileExists(atPath: replacementURL.deletingLastPathComponent().path))
         precondition(!FileManager.default.fileExists(atPath: previewFolder.path), "Closing preview removes temporary files")
         precondition(table.numberOfRows == 4 && window.title == "127.0.0.1 — Retriever", "Closing preview must preserve the connection")
@@ -184,12 +191,12 @@ struct BrowserChecks {
         let expected = try Data(contentsOf: root.appendingPathComponent("files/payload.bin"))
         precondition(actual == expected, "UI download must preserve exact bytes")
         // Repeating the download must report the occupied destination, preserve
-        // its bytes, and expose the disconnected state consistently.
+        // its bytes, and keep the session and listing usable.
         controller.retrieveSelection(to: destination)
         waitUntil("Existing destination error") { !controller.busy && window.attachedSheet != nil }
         let preserved = try Data(contentsOf: destination)
         precondition(preserved == expected, "Failed download changed existing file")
-        precondition(table.numberOfRows == 0 && window.title == "Retriever", "Failure must clear remote identity and listing")
+        precondition(table.numberOfRows == 2 && window.title == "127.0.0.1 — Retriever", "Local errors must preserve listing and connection")
         let download = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "download" }!
         let open = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "connect" }!
         let errorSheet = window.attachedSheet!
@@ -197,11 +204,35 @@ struct BrowserChecks {
         dismiss.performClick(nil)
         waitUntil("Error dismissal") { window.attachedSheet == nil }
         pump()
-        precondition(!download.isEnabled && open.isEnabled, "Failure must allow reconnect and disable download")
-        controller.openConnection(nil)
-        waitUntil("Reconnect for preview cancellation") { window.attachedSheet != nil }
-        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Connect" }!.performClick(nil)
-        waitUntil("Connected for preview cancellation") { !controller.busy && table.numberOfRows == 2 }
+        precondition(download.isEnabled && open.isEnabled, "A recoverable error must permit another download")
+        try Data("replace me".utf8).write(to: destination)
+        controller.retrieveSelection(to: destination, policy: .replaceApproved)
+        waitUntil("Approved replacement") { !controller.busy }
+        let replacedBytes = try Data(contentsOf: destination)
+        precondition(replacedBytes == expected)
+        precondition(downloads.entries.count == 3, "Only successful downloads belong in history")
+        controller.showDownloads(nil)
+        let downloadsWindow = NSApp.windows.first { $0.title == "Downloads — Retriever" }!
+        let historyTable = descendants(downloadsWindow.contentView!).compactMap { $0 as? NSTableView }.first!
+        precondition(historyTable.numberOfRows == 3)
+        controller.showDownloads(nil)
+        precondition(NSApp.windows.filter { $0.title == "Downloads — Retriever" }.count == 1)
+        historyTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        precondition(descendants(downloadsWindow.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Show in Finder" }!.isEnabled)
+        for _ in 0..<5 { pump() }
+        let historyShot = Process()
+        historyShot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        historyShot.arguments = ["-x", "-l", String(downloadsWindow.windowNumber), "artifacts/verification/downloads-history.png"]
+        try historyShot.run()
+        historyShot.waitUntilExit()
+        precondition(historyShot.terminationStatus == 0)
+        descendants(downloadsWindow.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Clear History…" }!.performClick(nil)
+        waitUntil("Clear history confirmation") { downloadsWindow.attachedSheet != nil }
+        descendants(downloadsWindow.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Clear History" }!.performClick(nil)
+        waitUntil("History cleared") { downloads.entries.isEmpty && downloadsWindow.attachedSheet == nil }
+        precondition(historyTable.numberOfRows == 0 && FileManager.default.fileExists(atPath: destination.path))
+        downloadsWindow.performClose(nil)
+        window.makeKeyAndOrderFront(nil)
         let temporary = FileManager.default.temporaryDirectory
         func previewFolders() throws -> Set<String> {
             Set(try FileManager.default.contentsOfDirectory(atPath: temporary.path).filter { $0.hasPrefix("Retriever-preview-") })
@@ -209,11 +240,41 @@ struct BrowserChecks {
         let existingPreviews = try previewFolders()
         table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
         controller.previewSelected(nil)
-        controller.cancel(nil)
-        waitUntil("Cancelled preview") { !controller.busy && window.title == "Retriever" }
+        window.sendEvent(key(53, "\u{1b}"))
+        waitUntil("Cancelled preview") { !controller.busy }
+        precondition(table.numberOfRows == 2, "Cancellation must preserve cached listing")
         let remainingPreviews = try previewFolders()
         precondition(remainingPreviews == existingPreviews, "Cancellation must remove temporary preview files")
         precondition(!NSApp.windows.contains { $0.isVisible && $0.contentView is QLPreviewView })
+        // A genuine transport loss retains the snapshot and offers explicit reconnect.
+        var disconnected = false
+        Task { await browser.disconnect(); disconnected = true }
+        waitUntil("Drop transport") { disconnected }
+        controller.refresh(nil)
+        waitUntil("Disconnected error") { !controller.busy && window.attachedSheet != nil }
+        precondition(table.numberOfRows == 2 && window.title.contains("Disconnected"))
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "OK" }!.performClick(nil)
+        waitUntil("Dismiss disconnected error") { window.attachedSheet == nil }
+        controller.reconnect(nil)
+        waitUntil("Explicit reconnect") { !controller.busy && window.title == "127.0.0.1 — Retriever" }
+        // Large previews ask before transferring. A file that grows after listing
+        // is also stopped by the streaming limit and asks before retrying.
+        let payload = root.appendingPathComponent("files/payload.bin")
+        try Data(repeating: 65, count: 1_000_001).write(to: payload)
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        controller.previewSelected(nil)
+        waitUntil("Grown file preview confirmation") { !controller.busy && window.attachedSheet != nil }
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Cancel" }!.performClick(nil)
+        waitUntil("Decline grown preview") { window.attachedSheet == nil }
+        controller.refresh(nil)
+        waitUntil("Refresh large file") { !controller.busy }
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        controller.previewSelected(nil)
+        precondition(!controller.busy && window.attachedSheet != nil, "Known large file must ask before transfer")
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Download and Preview" }!.performClick(nil)
+        waitUntil("Approved large preview") { !controller.busy && NSApp.windows.contains { $0.isVisible && $0.contentView is QLPreviewView } }
+        controller.closePreview()
+        precondition(downloads.entries.isEmpty, "Previews must not enter cleared download history")
         controller.disconnect(nil)
         waitUntil("Disconnect") { !controller.busy && table.numberOfRows == 0 }
         controller.openConnection(nil)

@@ -19,7 +19,7 @@ runner = 'BrowserChecks' if gui else 'SSHChecks'
 sources = ['Tests/RetrieverSSHChecks/SSHChecks.swift']
 if gui:
     sources = ['Sources/RetrieverApp/AppDelegate.swift', 'Sources/RetrieverApp/AppMenu.swift',
-               'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
+               'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/DownloadsWindowController.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
                'Tests/RetrieverAppChecks/BrowserChecks.swift']
 subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-F', str(products),
                 '-framework', 'RetrieverCore', '-framework', 'AppKit', '-Xlinker', '-rpath', '-Xlinker', str(products)] +

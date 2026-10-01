@@ -1,6 +1,11 @@
 import Foundation
 import Darwin
 
+public enum DownloadDestinationPolicy: Sendable {
+    case exclusive
+    case replaceApproved
+}
+
 /// A synchronous session. Own and call it on a dedicated serial worker, never the UI thread.
 /// SSH owns encryption, authentication and host-key verification.
 public final class SFTPSession {
@@ -12,6 +17,9 @@ public final class SFTPSession {
     private var diagnosticsOpen = false
     private var requestID: UInt32 = 0
     private var connected = false
+    private var exchangeInFlight = false
+    private var cleanupDeadline: TimeInterval?
+    public var isUsable: Bool { connected && !exchangeInFlight }
     var cancellation: SFTPCancellation
     private let idleTimeout: TimeInterval
     private let authenticationTimeout: TimeInterval
@@ -113,7 +121,7 @@ public final class SFTPSession {
         payload.bytes(path)
         var response = try request(11, payload: payload, expecting: 102)
         let handle = try response.bytes()
-        defer { try? closeHandle(handle) }
+        defer { finishHandle(handle) }
         var entries: [RemoteEntry] = []
         while true {
             var read = SFTPWriter()
@@ -139,17 +147,18 @@ public final class SFTPSession {
         }
     }
 
-    /// Writes a sibling temporary file, then publishes without replacing an existing destination.
+    /// Writes a sibling temporary file, then atomically publishes under an explicit destination policy.
     /// Failed reads leave the destination untouched and remove the temporary file.
-    public func download(_ path: Data, to destination: URL, progress: (UInt64) -> Void = { _ in }) throws {
-        guard !FileManager.default.fileExists(atPath: destination.path) else { throw SFTPError.destinationExists }
+    @discardableResult
+    public func download(_ path: Data, to destination: URL, policy: DownloadDestinationPolicy = .exclusive, maximumBytes: UInt64? = nil, progress: (UInt64) -> Void = { _ in }) throws -> UInt64 {
+        try validateDestination(destination, policy: policy)
         var payload = SFTPWriter()
         payload.bytes(path)
         payload.uint32(1) // SSH_FXF_READ
         payload.uint32(0) // no requested attributes
         var response = try request(3, payload: payload, expecting: 102)
         let handle = try response.bytes()
-        defer { try? closeHandle(handle) }
+        defer { finishHandle(handle) }
         let temporary = destination.deletingLastPathComponent().appendingPathComponent(".retriever-\(UUID().uuidString).partial")
         let descriptor = temporary.withUnsafeFileSystemRepresentation { path in
             Darwin.open(path!, O_WRONLY | O_CREAT | O_EXCL, mode_t(0o600))
@@ -168,6 +177,7 @@ public final class SFTPSession {
             catch SFTPError.server(1, _) { break }
             let bytes = try response.bytes()
             guard !bytes.isEmpty, bytes.count <= 32768, response.remaining == 0 else { throw SFTPError.malformedPacket }
+            if let maximumBytes, offset + UInt64(bytes.count) > maximumBytes { throw SFTPError.previewLimitExceeded }
             try file.write(contentsOf: bytes)
             offset += UInt64(bytes.count)
             progress(offset)
@@ -175,11 +185,13 @@ public final class SFTPSession {
         try cancellation.check()
         try file.synchronize()
         try file.close()
+        try cancellation.check()
+        try validateDestination(destination, policy: policy)
         // Exclusive rename preserves a destination that appeared during transfer,
         // including a dangling symlink, without requiring hard-link support.
         let published = temporary.withUnsafeFileSystemRepresentation { source in
             destination.withUnsafeFileSystemRepresentation { target in
-                renamex_np(source!, target!, UInt32(RENAME_EXCL))
+                renamex_np(source!, target!, policy == .exclusive ? UInt32(RENAME_EXCL) : 0)
             }
         }
         guard published == 0 else {
@@ -187,6 +199,41 @@ public final class SFTPSession {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
         progress(offset)
+        return offset
+    }
+
+    private func validateDestination(_ destination: URL, policy: DownloadDestinationPolicy) throws {
+        var info = stat()
+        let result = destination.withUnsafeFileSystemRepresentation { lstat($0!, &info) }
+        if result == 0 {
+            guard policy == .replaceApproved else { throw SFTPError.destinationExists }
+            guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { throw SFTPError.invalidDestination }
+        } else if errno != ENOENT {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    // Cancellation before a new exchange can preserve the stream. Never send a
+    // CLOSE into a partially received response; cleanup has an absolute deadline.
+    private func finishHandle(_ handle: Data) {
+        guard isUsable else { disconnect(); return }
+        let original = cancellation
+        cancellation = SFTPCancellation()
+        cleanupDeadline = ProcessInfo.processInfo.systemUptime + 1
+        defer { cancellation = original; cleanupDeadline = nil }
+        do { try closeHandle(handle) } catch { disconnect() }
+    }
+
+    func handleFailure(_ error: Error) {
+        if let error = error as? SFTPError {
+            switch error {
+            case .malformedPacket, .unsupportedVersion, .disconnected, .timedOut, .transport:
+                disconnect()
+            case .server(let code, _) where code == 6 || code == 7: disconnect()
+            default: break
+            }
+        }
+        if exchangeInFlight { disconnect() }
     }
 
     public static func appending(_ name: Data, to directory: Data) -> Data {
@@ -204,6 +251,8 @@ public final class SFTPSession {
 
     private func request(_ type: UInt8, payload: SFTPWriter, expecting: UInt8) throws -> SFTPReader {
         guard connected else { throw SFTPError.disconnected }
+        try cancellation.check()
+        exchangeInFlight = true
         requestID &+= 1
         var packet = SFTPWriter()
         packet.byte(type)
@@ -218,11 +267,13 @@ public final class SFTPSession {
             let message = String(decoding: try response.bytes(), as: UTF8.self)
             _ = try response.bytes()
             guard response.remaining == 0 else { throw SFTPError.malformedPacket }
+            exchangeInFlight = false
             if code != 0 { throw SFTPError.server(code, message) }
             guard expecting == 101 else { throw SFTPError.malformedPacket }
             return response
         }
         guard responseType == expecting else { throw SFTPError.malformedPacket }
+        exchangeInFlight = false
         return response
     }
 
@@ -254,6 +305,7 @@ public final class SFTPSession {
         var lastWrite = ProcessInfo.processInfo.systemUptime
         while offset < bytes.count {
             try cancellation.check()
+            if let cleanupDeadline, ProcessInfo.processInfo.systemUptime >= cleanupDeadline { throw SFTPError.timedOut }
             drainDiagnostics()
             guard ProcessInfo.processInfo.systemUptime - lastWrite < responseTimeout else { throw SFTPError.timedOut }
             var state = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
@@ -287,6 +339,7 @@ public final class SFTPSession {
         let descriptor = output.fileHandleForReading.fileDescriptor
         while result.count < count {
             try cancellation.check()
+            if let cleanupDeadline, ProcessInfo.processInfo.systemUptime >= cleanupDeadline { throw SFTPError.timedOut }
             drainDiagnostics()
             guard ProcessInfo.processInfo.systemUptime - lastRead < responseTimeout else { throw SFTPError.timedOut }
             var descriptorState = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)

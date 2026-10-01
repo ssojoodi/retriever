@@ -32,8 +32,18 @@ private final class FolderDisclosureButton: NSButton {
 
 @MainActor
 private final class FileOutlineView: NSOutlineView {
+    var preview: (() -> Void)?
+    var canOpenMenu: (() -> Bool)?
+    override func keyDown(with event: NSEvent) {
+        if event.charactersIgnoringModifiers == " ", event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
+            if !event.isARepeat { preview?() }
+            return
+        }
+        super.keyDown(with: event)
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
-        guard isEnabled, window?.attachedSheet == nil else { return nil }
+        guard isEnabled, canOpenMenu?() != false, window?.attachedSheet == nil else { return nil }
         let clickedRow = row(at: convert(event.locationInWindow, from: nil))
         guard clickedRow >= 0 else { return nil }
         selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
@@ -56,6 +66,7 @@ private final class FileOutlineView: NSOutlineView {
     @objc private func toggleFolder(_ sender: NSButton) {
         guard isEnabled, let item = item(atRow: row(for: sender)) else { return }
         if isItemExpanded(item) { collapseItem(item) } else { expandItem(item) }
+        window?.makeFirstResponder(self)
         needsDisplay = true
     }
 
@@ -67,9 +78,32 @@ private final class FileOutlineView: NSOutlineView {
 }
 
 @MainActor
+private final class PreviewPanel: NSPanel {
+    var escape: (() -> Void)?
+    override func cancelOperation(_ sender: Any?) { escape?() }
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 53, attachedSheet == nil { escape?(); return }
+        super.sendEvent(event)
+    }
+}
+
+@MainActor
+private final class BrowserWindow: NSWindow {
+    var cancelPreview: (() -> Bool)?
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 53, attachedSheet == nil, cancelPreview?() == true { return }
+        super.sendEvent(event)
+    }
+}
+
+@MainActor
 final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSWindowDelegate, NSMenuItemValidation {
     private let browser: SFTPBrowser
     private let history: ConnectionHistory
+    private let downloads: DownloadHistory
+    private var downloadsWindow: DownloadsWindowController?
+    private var connected = false
+    private var preparingPreview = false
     private var activeSettings: ConnectionSettings?
     private var connectionSheet: ConnectionSheet?
     private var previewPanel: NSPanel?
@@ -87,15 +121,23 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private(set) var busy = false
     private var afterCleanup: (@MainActor () -> Void)?
 
-    init(browser: SFTPBrowser = SFTPBrowser(askpass: Bundle.main.executableURL), history: ConnectionHistory = ConnectionHistory()) {
+    init(browser: SFTPBrowser = SFTPBrowser(askpass: Bundle.main.executableURL), history: ConnectionHistory = ConnectionHistory(), downloads: DownloadHistory = DownloadHistory()) {
         self.browser = browser
         self.history = history
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        self.downloads = downloads
+        let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Retriever"
         window.minSize = NSSize(width: 580, height: 360)
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
+        window.cancelPreview = { [weak self] in
+            guard let self, preparingPreview, busy else { return false }
+            cancel(nil)
+            return true
+        }
+        table.preview = { [weak self] in self?.previewSelected(nil) }
+        table.canOpenMenu = { [weak self] in self?.busy == false }
         window.center()
         let toolbar = NSToolbar(identifier: "Browser")
         toolbar.delegate = self
@@ -166,6 +208,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
 
     private static let actions: [(String, String, String, Selector)] = [
         ("connect", "Open Connection", "plus.circle", #selector(openConnection(_:))),
+        ("reconnect", "Reconnect", "arrow.triangle.2.circlepath", #selector(reconnect(_:))),
+        ("history", "Downloads", "clock.arrow.circlepath", #selector(showDownloads(_:))),
         ("up", "Up", "arrow.up", #selector(goUp(_:))),
         ("refresh", "Refresh", "arrow.clockwise", #selector(refresh(_:))),
         ("download", "Download", "arrow.down.circle", #selector(downloadSelected(_:))),
@@ -176,7 +220,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         Self.actions.map { .init($0.0) } + [.flexibleSpace]
     }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.init("connect"), .init("up"), .init("refresh"), .flexibleSpace, .init("download"), .init("disconnect"), .init("cancel")]
+        [.init("connect"), .init("reconnect"), .init("up"), .init("refresh"), .flexibleSpace, .init("download"), .init("history"), .init("disconnect"), .init("cancel")]
     }
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         guard let definition = Self.actions.first(where: { $0.0 == identifier.rawValue }) else { return nil }
@@ -193,7 +237,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private var selected: RemoteEntry? { selectedNode?.entry }
     private func enabled(_ action: Selector?) -> Bool {
         if action == #selector(cancel(_:)) { return busy }
+        if action == #selector(showDownloads(_:)) { return true }
         if busy { return false }
+        if action == #selector(reconnect(_:)) { return !connected && activeSettings != nil }
+        if action != #selector(openConnection(_:)) && !connected { return false }
         switch action {
         case #selector(openConnection(_:)): return true
         case #selector(goUp(_:)): return directory != nil && directory?.path != Data("/".utf8)
@@ -203,10 +250,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         default: return false
         }
     }
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { enabled(menuItem.action) }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { window?.attachedSheet == nil && enabled(menuItem.action) }
     private func updateControls() {
         for item in window?.toolbar?.items ?? [] { item.isEnabled = enabled(item.action) }
-        table.isEnabled = !busy
+        table.isEnabled = true
         scroll.isHidden = directory == nil
         empty.isHidden = !(directory == nil || directory?.entries.isEmpty == true)
         empty.stringValue = directory == nil ? "Open a connection to browse your files." : "This folder is empty."
@@ -227,8 +274,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     func outlineView(_ outlineView: NSOutlineView, shouldExpandItem item: Any) -> Bool {
         guard let node = item as? FileNode else { return false }
         if completingExpansion { return true }
-        guard !busy else { return false }
         if node.children != nil { return true }
+        guard !busy, connected else { return false }
         runOperation("Loading \(node.entry.name)…") { [self] signal in
             let result = try await browser.directory(node.path, cancellation: signal)
             node.children = result.entries.map { FileNode($0, parent: result.path) }
@@ -240,7 +287,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         }
         return false
     }
-    func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool { !busy }
+    func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool { true }
     func outlineViewSelectionDidChange(_ notification: Notification) { updateControls() }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? FileNode else { return nil }
@@ -274,19 +321,22 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         updateControls()
         Task { [weak self] in
             guard let self else { return }
-            do { try await operation(signal) }
+            do { try await operation(signal); cancellation = nil }
             catch {
-                activeSettings = nil
-                directory = nil
-                roots = []
-                table.reloadData()
-                window?.title = "Retriever"
-                if error is CancellationError { status.stringValue = "Cancelled. Disconnected." }
+                cancellation = nil
+                connected = await browser.isConnected
+                let suffix = connected ? "" : (activeSettings == nil ? " Open Connection to try again." : " Disconnected — use Reconnect to continue.")
+                if error is CancellationError { status.stringValue = "Cancelled." + suffix }
                 else {
-                    status.stringValue = "Disconnected"
-                    if let window { NSAlert(error: error).beginSheetModal(for: window, completionHandler: nil) }
+                    status.stringValue = "Operation failed." + suffix
+                    if let window { NSAlert(error: error).beginSheetModal(for: window) { [weak self] _ in self?.updateControls() } }
                 }
             }
+            connected = await browser.isConnected
+            if !connected, directory != nil {
+                window?.title = "\(activeSettings?.host ?? "Server") — Disconnected — Retriever"
+            }
+            preparingPreview = false
             busy = false
             cancellation = nil
             updateControls()
@@ -296,65 +346,133 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         }
     }
     private func show(_ result: RemoteDirectory) {
+        let selectedPath = selectedNode?.path
+        let sameFolder = directory?.path == result.path
         directory = result
         roots = result.entries.map { FileNode($0, parent: result.path) }
         if let activeSettings { history.updateLocation(result.path, for: activeSettings) }
         table.deselectAll(nil)
         table.reloadData()
+        if sameFolder, let selectedPath {
+            for row in 0..<table.numberOfRows where (table.item(atRow: row) as? FileNode)?.path == selectedPath {
+                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            }
+        }
+        if window?.isKeyWindow == true, window?.attachedSheet == nil, window?.firstResponder === window || window?.firstResponder == nil { window?.makeFirstResponder(table) }
         status.stringValue = "\(result.entries.count) items"
         updateControls()
     }
     private func connect(_ settings: ConnectionSettings, startingAt path: Data?) {
+        let expanded = settings == activeSettings && path == directory?.path ? expandedPaths : []
+        let selection = selectedNode?.path
         runOperation("Connecting to \(settings.host)…") { [self] signal in
             let result = try await browser.connect(settings, startingAt: path, cancellation: signal)
+            connected = true
             activeSettings = settings
             history.remember(settings, path: result.path)
             show(result)
-            if result.usedHomeFallback { status.stringValue = "Previous folder unavailable. Opened your home folder." }
             window?.title = "\(settings.host) — Retriever"
+            try await restoreExpanded(expanded, selection: selection, signal: signal)
+            if result.usedHomeFallback { status.stringValue = "Previous folder unavailable. Opened your home folder." }
+        }
+    }
+    private var expandedPaths: [Data] {
+        (0..<table.numberOfRows).compactMap { row in
+            guard let node = table.item(atRow: row) as? FileNode, table.isItemExpanded(node) else { return nil }
+            return node.path
+        }
+    }
+    private func restoreExpanded(_ paths: [Data], selection: Data?, signal: SFTPCancellation) async throws {
+        for path in paths {
+            guard let node = (0..<table.numberOfRows).compactMap({ table.item(atRow: $0) as? FileNode }).first(where: { $0.path == path && $0.entry.attributes.isDirectory }) else { continue }
+            do {
+                let result = try await browser.directory(path, cancellation: signal)
+                node.children = result.entries.map { FileNode($0, parent: result.path) }
+                table.reloadItem(node, reloadChildren: true)
+                completingExpansion = true
+                table.expandItem(node)
+                completingExpansion = false
+            } catch SFTPError.server(let code, _) where code != 6 && code != 7 {
+                // A removed or inaccessible child must not discard a refreshed root.
+                continue
+            }
+        }
+        if let selection, let row = (0..<table.numberOfRows).first(where: { (table.item(atRow: $0) as? FileNode)?.path == selection }) {
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
     }
     private func navigate(_ path: Data) {
+        let expanded = path == directory?.path ? expandedPaths : []
+        let selection = selectedNode?.path
         runOperation("Loading folder…") { [self] signal in
             show(try await browser.directory(path, cancellation: signal))
+            try await restoreExpanded(expanded, selection: selection, signal: signal)
         }
     }
-    @objc func refresh(_ sender: Any?) { if !busy, let directory { navigate(directory.path) } }
+    @objc func refresh(_ sender: Any?) { if enabled(#selector(refresh(_:))), let directory { navigate(directory.path) } }
     @objc func goUp(_ sender: Any?) {
         if enabled(#selector(goUp(_:))), let directory { navigate(SFTPSession.appending(Data("..".utf8), to: directory.path)) }
     }
     @objc func openSelected(_ sender: Any?) {
-        guard !busy, let node = selectedNode else { return }
+        guard enabled(#selector(openSelected(_:))), let node = selectedNode else { return }
         if node.entry.attributes.isDirectory { navigate(node.path) }
         else { downloadSelected(sender) }
     }
     @objc func downloadSelected(_ sender: Any?) {
-        guard enabled(#selector(downloadSelected(_:))), let selected, let window else { return }
+        guard window?.attachedSheet == nil, enabled(#selector(downloadSelected(_:))), let node = selectedNode, let window else { return }
         let panel = NSSavePanel()
         panel.title = "Download File"
         panel.prompt = "Download"
-        panel.nameFieldStringValue = selected.name
+        panel.nameFieldStringValue = node.entry.name
         panel.canCreateDirectories = true
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let destination = panel.url, let self else { return }
-            self.retrieveSelection(to: destination)
+            let policy: DownloadDestinationPolicy = FileManager.default.fileExists(atPath: destination.path) ? .replaceApproved : .exclusive
+            self.retrieve(node, to: destination, policy: policy)
         }
     }
-    func retrieveSelection(to destination: URL) {
-        guard enabled(#selector(downloadSelected(_:))), let selected, let node = selectedNode else { return }
+    func retrieveSelection(to destination: URL, policy: DownloadDestinationPolicy = .exclusive) {
+        guard enabled(#selector(downloadSelected(_:))), let node = selectedNode else { return }
+        retrieve(node, to: destination, policy: policy)
+    }
+    private func retrieve(_ node: FileNode, to destination: URL, policy: DownloadDestinationPolicy) {
+        guard !busy, connected, let settings = activeSettings else { return }
+        let selected = node.entry
         runOperation("Downloading \(selected.name)…") { [self] signal in
-            try await browser.download(node.path, to: destination, cancellation: signal) { [weak self] bytes in
+            let bytes = try await browser.download(node.path, to: destination, policy: policy, cancellation: signal) { [weak self] bytes in
                 Task { @MainActor [weak self] in
                     guard let self, busy, cancellation === signal else { return }
                     let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
                     status.stringValue = "Downloading \(selected.name) — \(count) received"
                 }
             }
+            downloads.record(filename: selected.name, settings: settings, remotePath: node.path, destination: destination, byteCount: bytes)
             status.stringValue = "Downloaded to \(destination.path)"
         }
     }
     @objc func previewSelected(_ sender: Any?) {
-        guard enabled(#selector(previewSelected(_:))), let node = selectedNode else { return }
+        guard window?.attachedSheet == nil, enabled(#selector(previewSelected(_:))), let node = selectedNode else { return }
+        if node.entry.attributes.size.map({ $0 > 1_000_000 }) ?? true { confirmPreview(node) }
+        else { preparePreview(node, approved: false) }
+    }
+    private func confirmPreview(_ node: FileNode) {
+        guard let window, window.attachedSheet == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = "Download this file for preview?"
+        let size = node.entry.attributes.size.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) } ?? "unknown size"
+        alert.informativeText = "\(node.entry.name) must be downloaded before it can be previewed. Its size exceeds the 1 MB preview limit or needs confirmation. Listed size: \(size)."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Download and Preview")
+        alert.beginSheetModal(for: window) { [weak self] result in
+            guard let self else { return }
+            updateControls()
+            if result == .alertSecondButtonReturn { preparePreview(node, approved: true) }
+        }
+        updateControls()
+    }
+    private func preparePreview(_ node: FileNode, approved: Bool) {
+        guard !busy, connected else { return }
+        preparingPreview = true
         runOperation("Preparing preview of \(node.entry.name)…") { [self] signal in
             let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("Retriever-preview-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -362,15 +480,27 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             defer { if !presented { try? FileManager.default.removeItem(at: temporary) } }
             let filename = node.entry.name.replacingOccurrences(of: "/", with: "_")
             let destination = temporary.appendingPathComponent(filename)
-            try await browser.download(node.path, to: destination, cancellation: signal) { [weak self] bytes in
-                Task { @MainActor [weak self] in
-                    guard let self, busy, cancellation === signal else { return }
-                    let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
-                    status.stringValue = "Preparing preview — \(count) received"
+            do {
+                try await browser.download(node.path, to: destination, maximumBytes: approved ? nil : 1_000_000, cancellation: signal) { [weak self] bytes in
+                    Task { @MainActor [weak self] in
+                        guard let self, busy, cancellation === signal else { return }
+                        let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+                        status.stringValue = "Preparing preview — \(count) received"
+                    }
                 }
+            } catch SFTPError.previewLimitExceeded {
+                try signal.check()
+                guard await browser.isConnected else { throw SFTPError.disconnected }
+                if afterCleanup == nil { afterCleanup = { [weak self] in self?.confirmPreview(node) } }
+                return
             }
+            try signal.check()
             closePreview()
-            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 720, height: 540), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            let panel = PreviewPanel(contentRect: NSRect(x: 0, y: 0, width: 720, height: 540), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            panel.escape = { [weak self] in
+                guard let self else { return }
+                if preparingPreview && busy { cancel(nil) } else { closePreview() }
+            }
             panel.title = node.entry.name
             panel.minSize = NSSize(width: 360, height: 260)
             panel.isReleasedWhenClosed = false
@@ -395,6 +525,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         panel.close()
         if let previewDirectory { try? FileManager.default.removeItem(at: previewDirectory) }
         previewDirectory = nil
+        if window?.isVisible == true { window?.makeKeyAndOrderFront(nil); window?.makeFirstResponder(table) }
+    }
+    @objc func showDownloads(_ sender: Any?) {
+        if downloadsWindow == nil { downloadsWindow = DownloadsWindowController(history: downloads) }
+        downloadsWindow?.showWindow(nil)
+        downloadsWindow?.window?.makeKeyAndOrderFront(nil)
+    }
+    @objc func reconnect(_ sender: Any?) {
+        guard enabled(#selector(reconnect(_:))), let activeSettings else { return }
+        connect(activeSettings, startingAt: directory?.path)
     }
     @objc func cancel(_ sender: Any?) {
         cancellation?.cancel()
@@ -404,6 +544,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         guard !busy else { return }
         runOperation("Disconnecting…") { [self] _ in
             await browser.disconnect()
+            connected = false
             activeSettings = nil
             directory = nil
             roots = []

@@ -2,6 +2,106 @@ import XCTest
 @testable import RetrieverCore
 
 final class SFTPTests: XCTestCase {
+    func testApprovedReplacementAndPreviewLimitPreserveOriginal() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let source = fixture.appendingPathComponent("source")
+        let target = fixture.appendingPathComponent("target")
+        let bytes = Data(repeating: 42, count: 1_000_001)
+        let original = Data("original".utf8)
+        try bytes.write(to: source)
+        try original.write(to: target)
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { session.disconnect() }
+        XCTAssertThrowsError(try session.download(Data(source.path.utf8), to: target, policy: .replaceApproved, maximumBytes: 1_000_000)) {
+            XCTAssertEqual($0 as? SFTPError, .previewLimitExceeded)
+        }
+        XCTAssertEqual(try Data(contentsOf: target), original)
+        XCTAssertTrue(session.isUsable)
+        XCTAssertThrowsError(try session.download(Data(fixture.appendingPathComponent("missing").path.utf8), to: target, policy: .replaceApproved))
+        XCTAssertEqual(try Data(contentsOf: target), original)
+        let signal = SFTPCancellation()
+        session.cancellation = signal
+        XCTAssertThrowsError(try session.download(Data(source.path.utf8), to: target, policy: .replaceApproved) { _ in signal.cancel() })
+        XCTAssertEqual(try Data(contentsOf: target), original)
+        XCTAssertTrue(session.isUsable)
+        session.cancellation = SFTPCancellation()
+        let total = try session.download(Data(source.path.utf8), to: target, policy: .replaceApproved)
+        XCTAssertEqual(total, UInt64(bytes.count))
+        XCTAssertEqual(try Data(contentsOf: target), bytes)
+        let link = fixture.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        XCTAssertThrowsError(try session.download(Data(source.path.utf8), to: link, policy: .replaceApproved)) {
+            XCTAssertEqual($0 as? SFTPError, .invalidDestination)
+        }
+        XCTAssertThrowsError(try session.download(Data(source.path.utf8), to: fixture, policy: .replaceApproved))
+        // The exact threshold is allowed.
+        try Data(repeating: 1, count: 1_000_000).write(to: source)
+        try session.download(Data(source.path.utf8), to: target, policy: .replaceApproved, maximumBytes: 1_000_000)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: fixture.path).contains { $0.hasSuffix(".partial") })
+    }
+
+    func testBrowserRetainsSessionAfterLocalAndServerErrors() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let source = fixture.appendingPathComponent("source")
+        try Data("payload".utf8).write(to: source)
+        let browser = SFTPBrowser(initialPath: Data(fixture.path.utf8)) { _, signal in
+            try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [], cancellation: signal)
+        }
+        let settings = try ConnectionSettings(host: "fixture", username: "test", port: "22")
+        _ = try await browser.connect(settings, cancellation: SFTPCancellation())
+        do {
+            try await browser.download(Data(source.path.utf8), to: source, cancellation: SFTPCancellation())
+            XCTFail("Expected destination error")
+        } catch { XCTAssertEqual(error as? SFTPError, .destinationExists) }
+        do {
+            _ = try await browser.directory(Data(fixture.appendingPathComponent("missing").path.utf8), cancellation: SFTPCancellation())
+            XCTFail("Expected missing folder")
+        } catch SFTPError.server {} catch { XCTFail("Unexpected error: \(error)") }
+        do {
+            try await browser.download(Data(source.path.utf8), to: fixture.appendingPathComponent("missing/file"), cancellation: SFTPCancellation())
+            XCTFail("Expected local write error")
+        } catch {}
+        let cancelled = SFTPCancellation()
+        cancelled.cancel()
+        do { _ = try await browser.directory(Data(fixture.path.utf8), cancellation: cancelled); XCTFail("Expected cancellation") }
+        catch is CancellationError {}
+        let stillConnected = await browser.isConnected
+        XCTAssertTrue(stillConnected)
+        let directory = try await browser.directory(Data(fixture.path.utf8), cancellation: SFTPCancellation())
+        XCTAssertEqual(directory.entries.map(\.name), ["source"])
+        await browser.disconnect()
+    }
+
+    @MainActor
+    func testDownloadHistoryPersistenceClearAndMissingFiles() throws {
+        let suite = "DownloadHistoryTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let file = fixture.appendingPathComponent("download")
+        try Data("file".utf8).write(to: file)
+        let settings = try ConnectionSettings(host: "fixture", username: "test", port: "22")
+        let history = DownloadHistory(defaults: defaults)
+        for name in ["first", "second"] {
+            history.record(filename: name, settings: settings, remotePath: Data(name.utf8), destination: file, byteCount: 4)
+        }
+        let restored = DownloadHistory(defaults: defaults)
+        XCTAssertEqual(restored.entries.map(\.filename), ["second", "first"])
+        XCTAssertNotNil(restored.location(for: restored.entries[0].id))
+        let moved = fixture.appendingPathComponent("moved-download")
+        try FileManager.default.moveItem(at: file, to: moved)
+        XCTAssertEqual(restored.location(for: restored.entries[0].id)?.standardizedFileURL, moved.standardizedFileURL)
+        try FileManager.default.removeItem(at: moved)
+        XCTAssertNil(restored.location(for: restored.entries[0].id))
+        try Data("file".utf8).write(to: file)
+        restored.clear()
+        XCTAssertTrue(DownloadHistory(defaults: defaults).entries.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+    }
+
     func testReconnectRestoresFolderAndFallsBackWhenMissing() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture) }
@@ -135,8 +235,22 @@ final class SFTPTests: XCTestCase {
         let started = Date()
         XCTAssertThrowsError(try session.canonicalPath(Data(repeating: 65, count: 1_000_000))) { error in
             XCTAssertTrue(error is CancellationError)
+            session.handleFailure(error)
         }
+        XCTAssertFalse(session.isUsable)
         XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+    }
+
+    func testMalformedResponseInvalidatesSession() throws {
+        // The greeting succeeds; a reply with the wrong request ID must poison
+        // the session even though the complete response frame was received.
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", #"printf '\000\000\000\005\002\000\000\000\003\000\000\000\005\150\000\000\000\177'; exec /bin/sleep 5"#])
+        defer { session.disconnect() }
+        XCTAssertThrowsError(try session.canonicalPath(Data(".".utf8))) { error in
+            XCTAssertEqual(error as? SFTPError, .malformedPacket)
+            session.handleFailure(error)
+        }
+        XCTAssertFalse(session.isUsable)
     }
 
     func testBlockedRequestWriteTimesOut() throws {
@@ -144,7 +258,9 @@ final class SFTPTests: XCTestCase {
         defer { session.disconnect() }
         XCTAssertThrowsError(try session.canonicalPath(Data(repeating: 65, count: 1_000_000))) { error in
             XCTAssertEqual(error as? SFTPError, .timedOut)
+            session.handleFailure(error)
         }
+        XCTAssertFalse(session.isUsable)
     }
 
     func testClosedServerInputDoesNotTerminateClient() throws {
