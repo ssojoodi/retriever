@@ -9,6 +9,7 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 - Bundle identifiers: `ca.sahand.Retriever`, `ca.sahand.RetrieverCore`, `ca.sahand.RetrieverCoreTests`. Inferred personal namespace; confirm before distribution.
 - One retained browser window, plus auxiliary Help, Downloads, and file Preview windows; closing the last window quits. Follow system light/dark appearance.
 - Successful hosts (server, username, port) and the last visited remote folder persist locally in UserDefaults. Selection remains transient; do not connect automatically on launch. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
+- Public versions use 0.1.0, 0.2.0, 0.3.0, and so on until 1.0.0; increment the middle number for each release. Do not maintain or present a separate build counter. CURRENT_PROJECT_VERSION derives from MARKETING_VERSION, and release metadata uses version only.
 - Direct Developer ID distribution, separately signed and notarized DMG. Universal arm64/x86_64 Release compilation and binary slices verified. Intel runtime remains untested.
 - Initial non-goals: FTP, uploads, remote deletion, synchronization, tabs, named bookmarks, App Store. A static download website is now maintained in `web-page/`.
 - MIT licensed; see LICENSE. Copyright 2026 Sahand Sojoodi. Public repository: https://github.com/ssojoodi/retriever.
