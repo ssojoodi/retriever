@@ -42,7 +42,7 @@ def notarize(path, profile, staging, label):
         raise RuntimeError(f'{label} notarization did not return Accepted. See {report}')
 
 
-def publish_release(repo, dmg, checksum, version, build):
+def publish_release(repo, dmg, checksum, version):
     """Publish a validated candidate locally; keep backups outside the website."""
     website = repo / 'web-page'
     website.mkdir(exist_ok=True)
@@ -60,7 +60,7 @@ def publish_release(repo, dmg, checksum, version, build):
         shutil.copy2(dmg, prepared / target.name)
         (prepared / 'Retriever.dmg.sha256').write_text(checksum + '  Retriever.dmg\n')
         (prepared / 'release.json').write_text(json.dumps({
-            'version': version, 'build': str(build), 'file': 'Retriever.dmg',
+            'version': version, 'file': 'Retriever.dmg',
             'sha256': checksum, 'bytes': dmg.stat().st_size,
             'published': datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }, indent=2) + '\n')
@@ -95,9 +95,9 @@ def main():
     app = derived / 'Build/Products/Release/Retriever.app'
     run('bash', 'scripts/verify_universal.sh', app)
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
-    version, build = info['CFBundleShortVersionString'], info['CFBundleVersion']
-    if not re.fullmatch(r'\d+(?:\.\d+){0,2}', version) or not str(build).isdigit():
-        raise RuntimeError('Invalid built version/build metadata.')
+    version = info['CFBundleShortVersionString']
+    if not re.fullmatch(r'\d+\.\d+\.\d+', version) or info['CFBundleVersion'] != version:
+        raise RuntimeError('The app version must use X.Y.Z, and its internal bundle version must match.')
     core = app / 'Contents/Frameworks/RetrieverCore.framework'
     for code in (core, app):
         run('codesign', '--force', '--options', 'runtime', '--timestamp', '--sign', args.identity, code)
@@ -114,7 +114,7 @@ def main():
     run('xcrun', 'stapler', 'staple', app)
     run('xcrun', 'stapler', 'validate', app)
     run('spctl', '--assess', '--type', 'execute', '--verbose=2', app)
-    dmg = staging / f'Retriever-{version}-{build}.dmg'
+    dmg = staging / f'Retriever-{version}.dmg'
     run(sys.executable, 'scripts/create_dmg.py', app, dmg, staging / 'dmg-layout')
     run('codesign', '--force', '--timestamp', '--sign', args.identity, dmg)
     notarize(dmg, args.profile, staging, 'dmg')
@@ -154,7 +154,7 @@ def main():
             digest.update(chunk)
     checksum = digest.hexdigest()
     (staging / 'sha256.txt').write_text(checksum + '  ' + dmg.name + '\n')
-    target = publish_release(repo, dmg, checksum, version, build)
+    target = publish_release(repo, dmg, checksum, version)
     print(f'Validated local release: {target}\nSHA-256: {checksum}\nBefore public distribution, test a quarantined download on a clean account/Mac when available and record untested environments.')
 
 

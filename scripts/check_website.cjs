@@ -27,10 +27,12 @@ const fs = require('node:fs');
     assert.equal(await page.title(),'Release notes — Retriever for macOS');
     await page.locator('[data-download]').waitFor({state:'visible'});
     assert.equal(await page.locator('[data-latest-release-label]').textContent(),'Published');
-    assert.equal(await page.locator('#v0-2-0').count(),1);
-    assert.equal(await page.locator('#v0-2-0 time').getAttribute('datetime'),'2026-09-29');
-    assert.equal(await page.locator('#v0-2-0 time').textContent(),'September 29, 2026');
+    assert.equal(await page.locator('#v0-3-0').count(),1);
+    assert.equal(await page.locator('#v0-3-0 time').getAttribute('datetime'),'2026-10-01');
+    assert.equal(await page.locator('#v0-3-0 time').textContent(),'October 1, 2026');
     assert.equal(await page.locator('#v0-1-0').count(),1);
+    assert.equal(await page.locator('#v0-2-0 time').getAttribute('datetime'),'2026-09-29');
+    assert.equal(await page.locator('#v0-3-0 .release-screenshot').count(),0);
     const screenshots = page.locator('#v0-2-0 .release-screenshot img');
     assert.equal(await screenshots.count(), 4);
     for (const screenshot of await screenshots.all()) {
@@ -60,6 +62,7 @@ const fs = require('node:fs');
     assert.equal(require('node:crypto').createHash('sha256').update(fs.readFileSync('.build/web-audit/clicked-Retriever.dmg')).digest('hex'),manifest.sha256);
     for (const response of [
       {json:{...manifest,version:'0.1.0',build:'2'}},
+      {json:{version:'0.3.0',file:manifest.file,sha256:manifest.sha256}},
       {status:404,body:''},
       {json:{invalid:true}}
     ]) {
@@ -68,6 +71,9 @@ const fs = require('node:fs');
         await page.goto('http://127.0.0.1:8105'+path,{waitUntil:'networkidle'});
         assert.equal(await page.locator('[data-download]').first().isVisible(),true);
         assert.equal(await page.locator('[data-download]').first().getAttribute('href'),'Retriever.dmg');
+        if (response.json?.version === '0.3.0') {
+          assert.match(await page.locator('[data-release-status]').first().textContent(), /version 0\.3\.0 · Signed/);
+        }
       }
       await page.unroute('**/release.json');
     }
@@ -82,6 +88,6 @@ const fs = require('node:fs');
     assert.equal(plainDownload.suggestedFilename(),'Retriever.dmg');
     await noScript.close();
     assert.deepEqual(errors,[]);
-    console.log('PASS: desktop/mobile layouts, screenshots, Sep 29 release date, direct downloads with old/missing/invalid metadata and JavaScript disabled, and artifact checksum.');
+    console.log('PASS: desktop/mobile layouts, screenshots, Oct 1 release date, direct downloads with old/missing/invalid metadata and JavaScript disabled, and artifact checksum.');
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

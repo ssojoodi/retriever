@@ -7,7 +7,7 @@ public final class SFTPCancellation: @unchecked Sendable {
     private var cancelled = false
     public init() {}
     public func cancel() { lock.withLock { cancelled = true } }
-    func check() throws { if lock.withLock({ cancelled }) { throw CancellationError() } }
+    public func check() throws { if lock.withLock({ cancelled }) { throw CancellationError() } }
 }
 
 private final class SFTPExecutor: SerialExecutor {
@@ -74,6 +74,13 @@ public actor SFTPBrowser {
         }
     }
 
+    public var isConnected: Bool { session?.isUsable == true }
+
+    private func handleFailure(_ error: Error) {
+        session?.handleFailure(error)
+        if session?.isUsable != true { disconnect() }
+    }
+
     public func directory(_ path: Data, cancellation: SFTPCancellation) throws -> RemoteDirectory {
         guard let session else { throw SFTPError.disconnected }
         session.cancellation = cancellation
@@ -81,19 +88,19 @@ public actor SFTPBrowser {
             let canonical = try session.canonicalPath(path)
             return RemoteDirectory(path: canonical, entries: try session.listDirectory(canonical))
         } catch {
-            // A failed or cancelled response can leave the stream out of alignment.
-            disconnect()
+            handleFailure(error)
             throw error
         }
     }
 
-    public func download(_ path: Data, to destination: URL, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws {
+    @discardableResult
+    public func download(_ path: Data, to destination: URL, policy: DownloadDestinationPolicy = .exclusive, maximumBytes: UInt64? = nil, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
         guard let session else { throw SFTPError.disconnected }
         session.cancellation = cancellation
         do {
             var lastUpdate: TimeInterval = 0
             var received: UInt64 = 0
-            try session.download(path, to: destination) { bytes in
+            let total = try session.download(path, to: destination, policy: policy, maximumBytes: maximumBytes) { bytes in
                 received = bytes
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastUpdate >= 0.1 {
@@ -102,8 +109,9 @@ public actor SFTPBrowser {
                 }
             }
             progress(received)
+            return total
         }
-        catch { disconnect(); throw error }
+        catch { handleFailure(error); throw error }
     }
 
     public func disconnect() {

@@ -29,6 +29,8 @@ enum AppMenu {
         let file = submenu("File")
         file.addItem(withTitle: "Open Connection…", action: #selector(MainWindowController.openConnection(_:)), keyEquivalent: "o")
         file.addItem(withTitle: "Download Selected File…", action: #selector(MainWindowController.downloadSelected(_:)), keyEquivalent: "d")
+        file.addItem(withTitle: "Preview Selected File", action: #selector(MainWindowController.previewSelected(_:)), keyEquivalent: "")
+        file.addItem(withTitle: "Reconnect", action: #selector(MainWindowController.reconnect(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Refresh", action: #selector(MainWindowController.refresh(_:)), keyEquivalent: "r")
         file.addItem(withTitle: "Enclosing Folder", action: #selector(MainWindowController.goUp(_:)), keyEquivalent: "[")
         file.addItem(withTitle: "Disconnect", action: #selector(MainWindowController.disconnect(_:)), keyEquivalent: "")
@@ -42,6 +44,8 @@ enum AppMenu {
         let window = submenu("Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        let downloads = window.addItem(withTitle: "Downloads", action: #selector(AppDelegate.showDownloads(_:)), keyEquivalent: "j")
+        downloads.keyEquivalentModifierMask = [.command, .shift]
         NSApp.windowsMenu = window
         let help = submenu("Help")
         help.addItem(withTitle: "Retriever Help", action: #selector(AppDelegate.showRetrieverHelp(_:)), keyEquivalent: "?")

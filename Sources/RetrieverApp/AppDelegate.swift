@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+    @objc func showDownloads(_ sender: Any?) { controller?.showDownloads(sender) }
     @objc func showRetrieverHelp(_ sender: Any?) {
         if let helpPanel { helpPanel.makeKeyAndOrderFront(nil); return }
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 540, height: 500), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
@@ -54,12 +55,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Compare the displayed fingerprint with one provided by the server administrator before choosing Trust and Connect. Cancel if it does not match. Accepted keys are saved in SSH known_hosts. A changed key is rejected.
 
         Browse and retrieve
-        Click a folder’s arrow to expand it inline, or double-click to open it. Use Up (⌘[) to return to the enclosing folder or Refresh (⌘R) to reload. Select a regular file and choose Download (⌘D). Right-click a file for Download or Preview. Preview opens a temporary copy in Quick Look; closing it removes the copy. Choose a new local filename; existing files are preserved. Folder and symbolic-link downloads are not supported yet.
+        Click a folder’s arrow to expand it inline, or double-click to open it. Use Up (⌘[) to return to the enclosing folder or Refresh (⌘R) to reload. Select a regular file and choose Download (⌘D). Right-click a file for Download or Preview, or press Space to preview the selected file. Escape closes Preview or cancels its download. Files larger than 1 MB require confirmation. Preview opens a temporary copy in Quick Look; closing it removes the copy. Choose a local filename; approve Replace in the save dialog to replace an existing file after the download completes. Folder and symbolic-link downloads are not supported yet.
 
         Cancel and disconnect
-        Cancel (⌘.) stops the current operation, closes the connection and removes partial downloads. Disconnect ends an idle connection. Closing or quitting during work asks whether to cancel first.
+        Cancel (⌘.) stops the current operation and removes partial downloads. The connection stays open when the protocol can be safely reused. Disconnect ends an idle connection. Closing or quitting during work asks whether to cancel first.
+
+        Download history
+        Open Downloads (⇧⌘J) to see completed downloads and reveal them in Finder. Clear History removes the records, not your files. Previews are not included.
 
         Connection trouble
+        File errors preserve the connection when possible. If the connection is lost, the listing stays visible; choose Reconnect to continue.
         Check the hostname, port, username and server availability. Read the SSH error details for rejected credentials or host-key problems. Authentication prompts expire after five minutes; stalled transfers time out after 30 seconds.
         """
         text.setAccessibilityLabel("Retriever instructions")

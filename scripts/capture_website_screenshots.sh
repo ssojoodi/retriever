@@ -10,7 +10,7 @@ mkdir -p .build/checks
 xcrun swiftc -swift-version 6 -F "$products" -framework RetrieverCore -framework AppKit \
   -Xlinker -rpath -Xlinker "$(cd "$products" && pwd)" \
   Sources/RetrieverApp/AppDelegate.swift Sources/RetrieverApp/AppMenu.swift \
-  Sources/RetrieverApp/ConnectionSheet.swift Sources/RetrieverApp/MainWindowController.swift \
+  Sources/RetrieverApp/ConnectionSheet.swift Sources/RetrieverApp/DownloadsWindowController.swift Sources/RetrieverApp/MainWindowController.swift \
   Sources/RetrieverApp/SSHAskpass.swift Tests/RetrieverAppChecks/WebsiteScreenshots.swift \
   -o .build/checks/WebsiteScreenshots
 LLVM_PROFILE_FILE=".build/checks/website-screenshots-%p.profraw" .build/checks/WebsiteScreenshots

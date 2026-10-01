@@ -7,6 +7,8 @@ public enum SFTPError: LocalizedError, Equatable {
     case timedOut
     case transport(String)
     case server(UInt32, String)
+    case previewLimitExceeded
+    case invalidDestination
     case destinationExists
 
     public var errorDescription: String? {
@@ -17,6 +19,8 @@ public enum SFTPError: LocalizedError, Equatable {
         case .timedOut: "The server stopped responding. Connect again to retry."
         case .disconnected: "The SFTP connection closed. Check the server, SSH key and known-host settings."
         case .server(_, let message): message.isEmpty ? "The server could not complete the request." : message
+        case .previewLimitExceeded: "This file is larger than 1 MB. Confirm before downloading it for preview."
+        case .invalidDestination: "Choose a regular file destination, not a folder or symbolic link."
         case .destinationExists: "A file already exists at the download destination. Choose a different name."
         }
     }

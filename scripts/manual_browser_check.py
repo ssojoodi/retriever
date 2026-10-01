@@ -49,6 +49,9 @@ def main():
             (files / 'Empty folder').mkdir()
             (files / 'Examples/Nested').mkdir(parents=True)
             (files / 'Examples/Nested/nested-test.txt').write_text('Retrieved from an expanded folder.\n')
+            (files / 'large-preview.txt').write_text('Large preview test.\n' * 100_000)
+            with (files / 'cancel-preview.bin').open('wb') as large:
+                large.truncate(128 * 1024 * 1024)
             (files / 'retriever-test.txt').write_text('Retrieved successfully with Retriever.\n')
             with socket.socket() as probe:
                 probe.bind(('127.0.0.1', 0))
