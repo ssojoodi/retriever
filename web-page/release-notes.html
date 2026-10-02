@@ -14,11 +14,9 @@
   </div>
   <main id="main" class="page-shell release-list"><article class="release" id="v0-4-0">
     <div class="release-meta"><span class="release-version">Version 0.4.0</span><time datetime="2026-10-02">October 2, 2026</time><a class="release-permalink" href="#v0-4-0">Link to this version</a></div>
-    <div class="release-content"><h2>Send files to your server.</h2><p class="release-intro">Upload a file from your Mac to the current remote folder, with progress, cancellation, and confirmation before replacing an existing file.</p>
-      <div class="release-change"><h3>Upload from the file browser</h3><ul><li>Choose Upload in the toolbar or File menu, or press ⌘U, then select a local file.</li><li>Retriever uploads to the folder shown above the file list.</li><li>See how many bytes have been sent. Use Cancel or ⌘. to stop the transfer.</li><li>After the upload completes, the file list refreshes and selects the uploaded file.</li></ul></div>
-      <div class="release-change"><h3>Choose when to replace a file</h3><ul><li>If a file with the same name exists on the server, choose Cancel or Replace.</li><li>Retriever finishes uploading a temporary copy before replacing the existing file.</li><li>Replacement requires server support for atomic rename. If that support is unavailable, the existing file stays untouched.</li></ul></div>
-      <div class="release-change"><h3>Know what happened if a transfer stops</h3><ul><li>Ordinary file errors leave the connection available when possible.</li><li>Retriever removes incomplete uploads when the connection can still be used safely.</li><li>If a connection failure prevents cleanup, an alert identifies the temporary remote file that may remain.</li><li>If the server may have completed the upload before the connection failed, Retriever asks you to check the destination before retrying.</li></ul></div>
-      <p class="body-copy">Requires macOS 14 or later. Uploads support one regular file at a time; folders and symbolic links are not supported. Uploaded files allow only their owner to read and write them. Uploads do not appear in Downloads history. FTP remains unsupported.</p>
+    <div class="release-content"><h2>Upload files to your server.</h2>
+      <div class="release-change"><ul><li>Choose Upload or press ⌘U to send a local file to the current remote folder.</li><li>Track progress, cancel transfers, and confirm before replacing an existing file.</li><li>The file list refreshes and selects your file after upload. Clear errors explain interrupted transfers.</li></ul></div>
+      <p class="body-copy">One file at a time; folders and symbolic links are not supported. Replacement requires server support for atomic rename.</p>
     </div>
   </article>
   <article class="release" id="v0-3-0">
