@@ -4,14 +4,14 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 
 ## Product contract
 - Display and internal name: Retriever. AppKit and Swift 6; macOS 14 minimum.
-- Primary workflow: connect to an SFTP server, browse folders, and download a selected file.
+- Primary workflow: connect to an SFTP server, browse folders, and transfer individual files.
 - First usable slice: one connection, directory navigation, one download with cancellation and visible errors.
 - Bundle identifiers: `ca.sahand.Retriever`, `ca.sahand.RetrieverCore`, `ca.sahand.RetrieverCoreTests`. Inferred personal namespace; confirm before distribution.
 - One retained browser window, plus auxiliary Help, Downloads, and file Preview windows; closing the last window quits. Follow system light/dark appearance.
 - Successful hosts (server, username, port) and the last visited remote folder persist locally in UserDefaults. Selection remains transient; do not connect automatically on launch. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
 - Public versions use 0.1.0, 0.2.0, 0.3.0, and so on until 1.0.0; increment the middle number for each release. Do not maintain or present a separate build counter. CURRENT_PROJECT_VERSION derives from MARKETING_VERSION, and release metadata uses version only.
 - Direct Developer ID distribution, separately signed and notarized DMG. Universal arm64/x86_64 Release compilation and binary slices verified. Intel runtime remains untested.
-- Initial non-goals: FTP, uploads, remote deletion, synchronization, tabs, named bookmarks, App Store. A static download website is now maintained in `web-page/`.
+- Initial non-goals: FTP, folder transfers, remote deletion, synchronization, tabs, named bookmarks, App Store. A static download website is now maintained in `web-page/`.
 - MIT licensed; see LICENSE. Copyright 2026 Sahand Sojoodi. Public repository: https://github.com/ssojoodi/retriever.
 
 ## Layout and commands
@@ -53,3 +53,6 @@ The native outline lazily expands remote folders and retains raw paths for neste
 Space previews the selected file only in the outline; Escape closes Preview or cancels its pending download. Keep outline focus and arrow navigation while gating remote actions during work. Previews above 1,000,000 bytes or of unknown size require confirmation; unapproved transfers enforce the same streaming limit for files that grew since listing. Existing previews remain until a replacement succeeds.
 
 `DownloadHistory` persists successful user downloads (never previews or failed/cancelled attempts), including source identity/raw path, completion date, actual bytes, and a local file bookmark. Inject isolated defaults in checks. Downloads (⇧⌘J) opens a reusable window with Show in Finder and Clear History; clearing never deletes files. No credentials are stored. Tests cover connection recovery, explicit replacement, keyboard events, confirmation, and history; native Save/Replace and Finder interaction still require manual verification.
+
+## Uploads
+Upload (⌘U) uses NSOpenPanel for one regular local file, targeting the displayed remote folder. Uploads are not download-history entries. SFTPSession opens sources with O_NOFOLLOW and validates regular files. Exclusive remote sibling temporary files use mode 0600; acknowledged WRITE and CLOSE precede publication. Default SFTP v3 RENAME must not replace existing names. Explicit native replacement approval uses advertised posix-rename@openssh.com version 1; unsupported servers fail without deleting the target. LSTAT rejects nonregular targets. Cleanup has a two-second bound on aligned sessions; transport loss reports a possible remote temporary file and, during rename, an uncertain publication outcome. Never retry an uncertain upload automatically. Success refreshes the listing and selects the uploaded file. Test SSH fixtures permit writes to generated fixture paths.

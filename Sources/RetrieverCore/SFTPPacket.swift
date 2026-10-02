@@ -10,6 +10,11 @@ public enum SFTPError: LocalizedError, Equatable {
     case previewLimitExceeded
     case invalidDestination
     case destinationExists
+    case uploadDestinationExists
+    case invalidUploadFile
+    case uploadReplacementUnsupported
+    case uploadSourceChanged
+    case uploadIncomplete(String)
 
     public var errorDescription: String? {
         switch self {
@@ -22,6 +27,11 @@ public enum SFTPError: LocalizedError, Equatable {
         case .previewLimitExceeded: "This file is larger than 1 MB. Confirm before downloading it for preview."
         case .invalidDestination: "Choose a regular file destination, not a folder or symbolic link."
         case .destinationExists: "A file already exists at the download destination. Choose a different name."
+        case .uploadDestinationExists: "A file with this name already exists in the remote folder."
+        case .invalidUploadFile: "Uploads require regular files. Folders and symbolic links cannot be uploaded or replaced."
+        case .uploadReplacementUnsupported: "This server does not support safe file replacement. Rename the local file before uploading it."
+        case .uploadSourceChanged: "The local file changed during upload. Try again after it has finished saving."
+        case .uploadIncomplete(let message): message
         }
     }
 }

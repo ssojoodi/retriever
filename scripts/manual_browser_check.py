@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the packaged app against a disposable, read-only loopback SFTP server.
+"""Launch the packaged app against a disposable loopback SFTP server.
 
 Keeps the fixture alive until Retriever quits. Does not edit SSH configuration;
 accepting the native trust prompt uses the user's normal known_hosts file.
@@ -46,6 +46,8 @@ def main():
             (root / 'authorized_keys').write_text((root / 'client_key.pub').read_text())
             files = Path(agent_directory) / 'files'
             files.mkdir()
+            upload_source = Path(agent_directory) / 'upload-test.txt'
+            upload_source.write_text('Uploaded successfully with Retriever.\n')
             (files / 'Empty folder').mkdir()
             (files / 'Examples/Nested').mkdir(parents=True)
             (files / 'Examples/Nested/nested-test.txt').write_text('Retrieved from an expanded folder.\n')
@@ -69,7 +71,7 @@ UsePAM no
 DisableForwarding yes
 PermitTTY no
 PermitUserRC no
-ForceCommand internal-sftp -R -d {files}
+ForceCommand internal-sftp -d {files}
 Subsystem sftp internal-sftp
 ''')
             subprocess.run(['/usr/sbin/sshd', '-t', '-f', str(config)], check=True)
@@ -109,6 +111,7 @@ Subsystem sftp internal-sftp
                 print(f'Server: 127.0.0.1\nUsername: {getpass.getuser()}\nPort: {port}', flush=True)
                 subprocess.run(['/usr/bin/ssh-keygen', '-lf', str(root / 'host_key.pub')], check=True)
                 print('Download retriever-test.txt. Expected text: Retrieved successfully with Retriever.\nQuit this Retriever instance to stop the fixture and remove temporary keys.', flush=True)
+                print(f'Upload fixture: {upload_source}', flush=True)
                 for launch in range(2 if args.relaunch_once else 1):
                     if launch:
                         print('Relaunching Retriever with the same server. Open Connection should remember the host and last folder.', flush=True)

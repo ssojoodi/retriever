@@ -60,7 +60,7 @@ UsePAM no
 DisableForwarding yes
 PermitTTY no
 PermitUserRC no
-ForceCommand internal-sftp -R
+ForceCommand internal-sftp
 Subsystem sftp internal-sftp
 ''')
     subprocess.run(['/usr/sbin/sshd', '-t', '-f', str(config)], check=True)

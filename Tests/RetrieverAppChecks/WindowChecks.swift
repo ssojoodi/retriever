@@ -48,6 +48,7 @@ struct WindowChecks {
             let items = window.toolbar!.items
             precondition(items.first(where: { $0.itemIdentifier.rawValue == "connect" })?.isEnabled == true)
             precondition(items.first(where: { $0.itemIdentifier.rawValue == "download" })?.isEnabled == false)
+            precondition(items.first(where: { $0.itemIdentifier.rawValue == "upload" })?.isEnabled == false)
             precondition(items.first(where: { $0.itemIdentifier.rawValue == "cancel" })?.isEnabled == false)
             window.makeKey()
             precondition(app.sendAction(#selector(MainWindowController.openConnection(_:)), to: nil, from: nil), "Connection action must route through the active window")

@@ -4,7 +4,7 @@
 
 Retriever started with a small task: grab a few files from a server without opening a terminal. The result is a focused SFTP browser written in Swift and AppKit, inspired by Cyberduck’s simplicity.
 
-Connect, browse, preview, and download. Retriever uses macOS controls and the system SSH client, with no third-party app dependencies.
+Connect, browse, preview, download, and upload. Retriever uses macOS controls and the system SSH client, with no third-party app dependencies.
 
 [Download for Mac](https://sojoodi.com/apps/Retriever/) · [Source code](https://github.com/ssojoodi/retriever) · [Release notes](https://sojoodi.com/apps/Retriever/release-notes.html) · [MIT license](LICENSE)
 
@@ -18,12 +18,13 @@ Requires **macOS 14 or later**. Release builds include Apple silicon and Intel b
 - **Browse folders in place.** Expand the file tree, navigate with arrow keys, or double-click a folder to open it.
 - **Preview before saving.** Press Space or choose Preview from a file’s context menu. Escape closes the preview or cancels its download. Files larger than 1 MB require confirmation.
 - **Download where you choose.** Use the native Save dialog, approve replacement of an existing file, and cancel active transfers.
+- **Upload to the current folder.** Choose Upload (⌘U), select one local file, and approve any replacement. Cancel stops an active transfer.
 - **Find previous downloads.** Open Downloads with ⇧⌘J and use Show in Finder. Clearing history leaves your files on disk.
 - **Recover without losing your place.** File errors preserve usable connections. If a connection closes, the listing stays visible and Reconnect lets you resume.
 
 Connect with SSH keys, an SSH agent, or a password. Retriever asks you to verify a new server’s fingerprint and rejects changed host keys. Passwords are never saved; accepted server keys stay in OpenSSH’s `known_hosts` file.
 
-The current app supports SFTP and individual file downloads. Uploads are the next development focus. FTP, folder downloads, and symbolic-link downloads are not available yet.
+This branch supports SFTP and individual file uploads and downloads. Uploads are not yet in the published 0.3.0 release. FTP, folder transfers, and symbolic-link transfers are not available.
 
 ## Build and run
 
@@ -72,6 +73,8 @@ SFTPBrowser actor ──► SFTPSession ──► system SSH ──► SFTP serv
 
 Downloads go to a temporary file beside the destination and become visible only after completion. Replacement requires explicit approval. Previews use a private temporary directory, which is removed when the preview closes.
 
+Uploads use a private temporary remote file and publish after all writes succeed. Replacement requires server support for atomic rename. If a connection fails, Retriever reports when a temporary file may remain or the final upload outcome is uncertain. Uploaded files have owner-only read/write permissions.
+
 The static download website lives in [`web-page`](web-page). Brand artwork lives in [`Brand`](Brand), and shared version settings live in [`Config/Signing.xcconfig`](Config/Signing.xcconfig).
 
 ## Check your changes
@@ -80,7 +83,7 @@ The static download website lives in [`web-page`](web-page). Brand artwork lives
 make test            # Core XCTest suite
 make check-ssh       # Real SSH transport and authentication checks
 make check-windows   # Native window behavior and lifecycle
-make check-browser   # Connection, browsing, previews, and downloads
+make check-browser   # Connection, browsing, previews, downloads, and uploads
 ```
 
 The integration checks need Python 3. Window and browser checks also need a logged-in macOS GUI session. SSH fixtures use temporary keys on a loopback server; no personal server credentials are needed.

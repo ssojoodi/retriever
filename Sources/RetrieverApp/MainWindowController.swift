@@ -212,6 +212,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         ("history", "Downloads", "clock.arrow.circlepath", #selector(showDownloads(_:))),
         ("up", "Up", "arrow.up", #selector(goUp(_:))),
         ("refresh", "Refresh", "arrow.clockwise", #selector(refresh(_:))),
+        ("upload", "Upload", "arrow.up.circle", #selector(uploadSelected(_:))),
         ("download", "Download", "arrow.down.circle", #selector(downloadSelected(_:))),
         ("disconnect", "Disconnect", "eject", #selector(disconnect(_:))),
         ("cancel", "Cancel", "xmark.circle", #selector(cancel(_:)))
@@ -220,7 +221,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         Self.actions.map { .init($0.0) } + [.flexibleSpace]
     }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.init("connect"), .init("reconnect"), .init("up"), .init("refresh"), .flexibleSpace, .init("download"), .init("history"), .init("disconnect"), .init("cancel")]
+        [.init("connect"), .init("reconnect"), .init("up"), .init("refresh"), .flexibleSpace, .init("upload"), .init("download"), .init("history"), .init("disconnect"), .init("cancel")]
     }
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         guard let definition = Self.actions.first(where: { $0.0 == identifier.rawValue }) else { return nil }
@@ -244,7 +245,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         switch action {
         case #selector(openConnection(_:)): return true
         case #selector(goUp(_:)): return directory != nil && directory?.path != Data("/".utf8)
-        case #selector(refresh(_:)), #selector(disconnect(_:)): return directory != nil
+        case #selector(refresh(_:)), #selector(disconnect(_:)), #selector(uploadSelected(_:)): return directory != nil
         case #selector(downloadSelected(_:)), #selector(previewSelected(_:)): return selected.map { !$0.attributes.isDirectory && !$0.attributes.isSymbolicLink } ?? false
         case #selector(openSelected(_:)): return selected != nil
         default: return false
@@ -329,7 +330,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
                 if error is CancellationError { status.stringValue = "Cancelled." + suffix }
                 else {
                     status.stringValue = "Operation failed." + suffix
-                    if let window { NSAlert(error: error).beginSheetModal(for: window) { [weak self] _ in self?.updateControls() } }
+                    if let window {
+                        // A failed remote cleanup must remain visible even when
+                        // the user requested cancellation as part of quitting.
+                        let closeAfterAcknowledgement = afterCleanup
+                        afterCleanup = nil
+                        NSAlert(error: error).beginSheetModal(for: window) { [weak self] _ in
+                            self?.updateControls()
+                            closeAfterAcknowledgement?()
+                        }
+                    }
                 }
             }
             connected = await browser.isConnected
@@ -417,6 +427,64 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         guard enabled(#selector(openSelected(_:))), let node = selectedNode else { return }
         if node.entry.attributes.isDirectory { navigate(node.path) }
         else { downloadSelected(sender) }
+    }
+    @objc func uploadSelected(_ sender: Any?) {
+        guard window?.attachedSheet == nil, enabled(#selector(uploadSelected(_:))), let directory, let window else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Upload File"
+        panel.prompt = "Upload"
+        panel.message = "Upload to \(String(decoding: directory.path, as: UTF8.self))"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = false
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let source = panel.url else { return }
+            self?.uploadFile(source, to: directory.path)
+        }
+    }
+    // The native picker and integration checks share the same upload operation.
+    func uploadFile(_ source: URL) {
+        guard window?.attachedSheet == nil, let directory else { return }
+        uploadFile(source, to: directory.path)
+    }
+    private func uploadFile(_ source: URL, to folder: Data, policy: UploadDestinationPolicy = .exclusive) {
+        guard enabled(#selector(uploadSelected(_:))) else { return }
+        let path = SFTPSession.appending(Data(source.lastPathComponent.utf8), to: folder)
+        let expanded = expandedPaths
+        runOperation("Uploading \(source.lastPathComponent)…") { [self] signal in
+            do {
+                try await browser.upload(source, to: path, policy: policy, cancellation: signal) { [weak self] bytes in
+                    Task { @MainActor [weak self] in
+                        guard let self, busy, cancellation === signal else { return }
+                        let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+                        status.stringValue = "Uploading \(source.lastPathComponent) — \(count) sent"
+                    }
+                }
+            } catch SFTPError.uploadDestinationExists {
+                guard let window, afterCleanup == nil else { return }
+                status.stringValue = "Upload needs replacement approval."
+                let alert = NSAlert()
+                alert.messageText = "Replace “\(source.lastPathComponent)”?"
+                alert.informativeText = "A file with this name already exists in \(String(decoding: folder, as: UTF8.self)). Replace it with the selected local file?"
+                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: "Replace")
+                alert.beginSheetModal(for: window) { [weak self] response in
+                    if response == .alertSecondButtonReturn { self?.uploadFile(source, to: folder, policy: .replaceApproved) }
+                    else { self?.status.stringValue = "Upload cancelled." }
+                }
+                return
+            }
+            // Publication already succeeded: a refresh failure must not imply failure of the upload.
+            do {
+                show(try await browser.directory(folder, cancellation: signal))
+                try await restoreExpanded(expanded, selection: path, signal: signal)
+                window?.makeFirstResponder(table)
+                status.stringValue = "Uploaded \(source.lastPathComponent)"
+            } catch {
+                status.stringValue = "Uploaded \(source.lastPathComponent); folder refresh did not finish."
+                if let window { NSAlert(error: error).beginSheetModal(for: window) { _ in } }
+            }
+        }
     }
     @objc func downloadSelected(_ sender: Any?) {
         guard window?.attachedSheet == nil, enabled(#selector(downloadSelected(_:))), let node = selectedNode, let window else { return }
@@ -554,13 +622,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         }
     }
     /// Returns true when immediate closing is safe; otherwise resolves the user's
-    /// choice and defers the completion until the worker has removed partial files.
+    /// choice and defers the completion until the worker finishes transfer cleanup.
     func requestClose(afterCancellation: @escaping @MainActor () -> Void) -> Bool {
         guard busy else { return true }
         guard afterCleanup == nil else { return false }
         let alert = NSAlert()
         alert.messageText = "Cancel the current operation and close?"
-        alert.informativeText = "The connection will close and any partial download will be removed."
+        alert.informativeText = "The connection will close after the current transfer stops."
         alert.addButton(withTitle: "Keep Working")
         alert.addButton(withTitle: "Cancel and Close")
         guard alert.runModal() == .alertSecondButtonReturn else { return false }
