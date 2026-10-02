@@ -100,13 +100,13 @@ The script opens Retriever and prints the temporary server’s connection detail
 
 Copy `release.env.example` to the ignored `release.env` and set an existing Developer ID signing identity and notarization Keychain profile. The file uses Make syntax.
 
-Run this in an interactive terminal:
+Run:
 
 ```sh
 make release
 ```
 
-The release process builds a universal app, signs and notarizes the app and branded DMG, and opens a copy for manual verification. After verification, it places the DMG, checksum, and release metadata in `web-page/` and backs up the previous artifacts locally. Upload the website separately.
+The release process reuses a dedicated universal Release build cache, signs the app and branded DMG, and submits the DMG to Apple for notarization. After automated validation, it places the DMG, checksum, and release metadata in `web-page/` and backs up previous artifacts in `docs/dmg-backups/`. There is no manual confirmation prompt. Upload the website separately.
 
 Public releases increment the middle version number: **0.1.0 → 0.2.0 → 0.3.0**, continuing until 1.0.0. There is no separate build counter.
 
