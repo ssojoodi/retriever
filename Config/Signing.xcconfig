@@ -2,3 +2,6 @@ MARKETING_VERSION = 0.4.0
 CURRENT_PROJECT_VERSION = $(MARKETING_VERSION)
 DEVELOPMENT_TEAM =
 #include? "LocalSigning.xcconfig"
+
+// Retriever supports Apple silicon Macs only.
+ARCHS = arm64

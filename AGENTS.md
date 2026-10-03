@@ -10,13 +10,13 @@ Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's si
 - One retained browser window, plus auxiliary Help, Downloads, and file Preview windows; closing the last window quits. Follow system light/dark appearance.
 - Successful hosts (server, username, port) and the last visited remote folder persist locally in UserDefaults. Selection remains transient; do not connect automatically on launch. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
 - Public versions use 0.1.0, 0.2.0, 0.3.0, and so on until 1.0.0; increment the middle number for each release. Do not maintain or present a separate build counter. CURRENT_PROJECT_VERSION derives from MARKETING_VERSION, and release metadata uses version only.
-- Direct Developer ID distribution, separately signed and notarized DMG. Universal arm64/x86_64 Release compilation and binary slices verified. Intel runtime remains untested.
+- Direct Developer ID distribution, separately signed and notarized DMG. Apple silicon (arm64) only; release checks reject other binary architectures. Intel and terminal VoiceOver support are outside scope.
 - Initial non-goals: FTP, folder transfers, remote deletion, synchronization, tabs, named bookmarks, App Store. A static download website is now maintained in `web-page/`.
 - MIT licensed; see LICENSE. Copyright 2026 Sahand Sojoodi. Public repository: https://github.com/ssojoodi/retriever.
 
 ## Layout and commands
 Xcode is authoritative. `Sources/RetrieverApp` owns UI; `Sources/RetrieverCore` owns testable connection and transfer behavior; `Tests/RetrieverCoreTests` owns XCTest cases. Explicit project membership is required for new files.
-`make build`, `make build-universal`, `make test`, `make check-windows`, `make check-ssh`, `make check-browser`, `make run`, `make assets`, `make paths`, `make help`.
+`make build`, `make build-release`, `make test`, `make check-windows`, `make check-ssh`, `make check-browser`, `make run`, `make assets`, `make paths`, `make help`.
 Generated output: `.build/`; inspected screenshots: `artifacts/verification/`; iteration plans: `docs/`.
 Shared version and signing settings live in `Config/Signing.xcconfig`. Local credentials remain ignored. Unsigned development works without release credentials. Release pipeline is a later milestone and must not report success until signing/notarization and DMG validation pass.
 
@@ -56,3 +56,8 @@ Space previews the selected file only in the outline; Escape closes Preview or c
 
 ## Uploads
 Upload (⌘U) uses NSOpenPanel for one regular local file, targeting the displayed remote folder. Uploads are not download-history entries. SFTPSession opens sources with O_NOFOLLOW and validates regular files. Exclusive remote sibling temporary files use mode 0600; acknowledged WRITE and CLOSE precede publication. Default SFTP v3 RENAME must not replace existing names. Explicit native replacement approval uses advertised posix-rename@openssh.com version 1; unsupported servers fail without deleting the target. LSTAT rejects nonregular targets. Cleanup has a two-second bound on aligned sessions; transport loss reports a possible remote temporary file and, during rename, an uncertain publication outcome. Never retry an uncertain upload automatically. Success refreshes the listing and selects the uploaded file. Test SSH fixtures permit writes to generated fixture paths.
+
+## SSH terminal feasibility branch
+This branch prototypes SSH into Folder with SwiftTerm 1.20.0 (exact package pin) in a separate reusable AppKit window. Files target their parent; folders target themselves; symlinks are disabled. SSHLaunchRequest quotes literal remote folder paths, rejects non-UTF-8/control-character paths, and starts the system SSH client independently of SFTP. Shell access requires a POSIX-compatible server login shell. Credentials are not copied; terminal prompts handle authentication. Remote clipboard requests are denied. Explicit session termination reaps the local SSH child after bounded cleanup. No terminal persistence, tabs, or splits.
+
+SwiftTerm requires the Apple Metal toolchain and approval of its inspected build-info plugin in Xcode. For this explicitly approved prototype only, command-line checks were run with `XCODE_FLAGS=-skipPackagePluginValidation`; no global trust setting was changed. `make check-terminal` runs a disposable shell-enabled SSH fixture; `python3 scripts/manual_browser_check.py --shell` supports manual checks. Existing browser/window scripts link SwiftTerm for controller compilation. ThirdPartyNotices.txt is included in the app bundle. The feasibility report lives in ignored docs/, screenshots in artifacts/verification/, metrics in .build/terminal-metrics/. Do not merge, bump the release version, or publish this prototype without reviewing the measured cost.

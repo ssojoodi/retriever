@@ -84,10 +84,11 @@ struct BrowserChecks {
         let blankEvent = NSEvent.mouseEvent(with: .rightMouseDown, location: blankLocation, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
         precondition(table.menu(for: blankEvent) == nil, "Empty space must not act on the prior selection")
         let folderMenu = contextMenu(row: 0)!
-        precondition(folderMenu.items.map(\.title) == ["Download", "Preview"])
-        precondition(folderMenu.items.allSatisfy { !$0.isEnabled }, "Folders cannot be downloaded or previewed")
+        precondition(folderMenu.items.map(\.title) == ["Download", "Preview", "", "SSH into Folder"])
+        precondition(folderMenu.items.prefix(2).allSatisfy { !$0.isEnabled }, "Folders cannot be downloaded or previewed")
+        precondition(folderMenu.items.last!.isEnabled, "Folders support SSH")
         let fileMenu = contextMenu(row: 2)!
-        precondition(table.selectedRow == 2 && fileMenu.items.allSatisfy(\.isEnabled), "Right click must target the pointed file")
+        precondition(table.selectedRow == 2 && fileMenu.items.filter { !$0.isSeparatorItem }.allSatisfy(\.isEnabled), "Right click must target the pointed file")
         fileMenu.performActionForItem(at: 0)
         waitUntil("Context Download uses save panel") { window.attachedSheet is NSSavePanel }
         (window.attachedSheet as! NSSavePanel).cancel(nil)

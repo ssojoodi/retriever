@@ -29,6 +29,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, default=repo / '.build/DerivedData/Build/Products/Debug/Retriever.app')
     parser.add_argument('--relaunch-once', action='store_true', help='Keep the fixture running for one app relaunch to test saved hosts.')
+    parser.add_argument('--shell', action='store_true', help='Allow interactive SSH for terminal checks.')
     args = parser.parse_args()
     app = args.app.resolve() / 'Contents/MacOS/Retriever'
     if not app.is_file():
@@ -69,10 +70,10 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM no
 DisableForwarding yes
-PermitTTY no
+PermitTTY {"yes" if args.shell else "no"}
 PermitUserRC no
-ForceCommand internal-sftp -d {files}
-Subsystem sftp internal-sftp
+{("ForceCommand internal-sftp -d " + str(files)) if not args.shell else ""}
+Subsystem sftp internal-sftp -d {files}
 ''')
             subprocess.run(['/usr/sbin/sshd', '-t', '-f', str(config)], check=True)
             environment = dict(os.environ, SSH_AUTH_SOCK=str(Path(agent_directory) / 'agent.sock'),

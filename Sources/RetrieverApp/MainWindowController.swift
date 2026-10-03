@@ -101,6 +101,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private let browser: SFTPBrowser
     private let history: ConnectionHistory
     private let downloads: DownloadHistory
+    private let sshTerminal = SSHTerminalWindowController()
     private var downloadsWindow: DownloadsWindowController?
     private var connected = false
     private var preparingPreview = false
@@ -172,6 +173,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             item.target = self
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         }
+        contextMenu.addItem(.separator())
+        let sshItem = contextMenu.addItem(withTitle: "SSH into Folder", action: #selector(sshIntoFolder(_:)), keyEquivalent: "")
+        sshItem.target = self
+        sshItem.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
         table.menu = contextMenu
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -247,6 +252,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         case #selector(goUp(_:)): return directory != nil && directory?.path != Data("/".utf8)
         case #selector(refresh(_:)), #selector(disconnect(_:)), #selector(uploadSelected(_:)): return directory != nil
         case #selector(downloadSelected(_:)), #selector(previewSelected(_:)): return selected.map { !$0.attributes.isDirectory && !$0.attributes.isSymbolicLink } ?? false
+        case #selector(sshIntoFolder(_:)): return selected.map { !$0.attributes.isSymbolicLink && ($0.attributes.isDirectory || $0.attributes.permissions.map { $0 & 0xF000 == 0x8000 } == true) } ?? false
         case #selector(openSelected(_:)): return selected != nil
         default: return false
         }
@@ -428,6 +434,18 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         if node.entry.attributes.isDirectory { navigate(node.path) }
         else { downloadSelected(sender) }
     }
+    @objc func sshIntoFolder(_ sender: Any?) {
+        guard window?.attachedSheet == nil, enabled(#selector(sshIntoFolder(_:))), let node = selectedNode, let settings = activeSettings else { return }
+        do {
+            let request = try SSHLaunchRequest(settings: settings, path: node.path, isDirectory: node.entry.attributes.isDirectory)
+            sshTerminal.open(request)
+        } catch {
+            if let window { NSAlert(error: error).beginSheetModal(for: window) { _ in } }
+        }
+    }
+    func confirmTerminalQuit() -> Bool { sshTerminal.confirmEndingSession("End the SSH session and quit Retriever?") }
+    func stopTerminal() { sshTerminal.stop() }
+
     @objc func uploadSelected(_ sender: Any?) {
         guard window?.attachedSheet == nil, enabled(#selector(uploadSelected(_:))), let directory, let window else { return }
         let panel = NSOpenPanel()

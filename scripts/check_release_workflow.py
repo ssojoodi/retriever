@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as temporary:
             return f'"{identity}"'
         if args[:2] == ('xcrun', 'xcodebuild'):
             assert args[args.index('-derivedDataPath') + 1] == str(repo / '.build/release/DerivedData')
-            assert 'ARCHS=arm64 x86_64' in args
+            assert 'ARCHS=arm64' in args
         elif args[0] == 'ditto':
             app = Path(args[2])
             (app / 'Contents').mkdir(parents=True)

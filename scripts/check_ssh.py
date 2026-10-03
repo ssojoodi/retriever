@@ -15,15 +15,19 @@ products = (Path(sys.argv[1] if len(sys.argv) > 1 else '.build/DerivedData') / '
 checks = repo / '.build/checks'
 checks.mkdir(parents=True, exist_ok=True)
 gui = '--gui' in sys.argv
-runner = 'BrowserChecks' if gui else 'SSHChecks'
+terminal = '--terminal' in sys.argv
+runner = 'TerminalChecks' if terminal else ('BrowserChecks' if gui else 'SSHChecks')
 sources = ['Tests/RetrieverSSHChecks/SSHChecks.swift']
 if gui:
     sources = ['Sources/RetrieverApp/AppDelegate.swift', 'Sources/RetrieverApp/AppMenu.swift',
-               'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/DownloadsWindowController.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
+               'Sources/RetrieverApp/SSHTerminalWindowController.swift', 'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/DownloadsWindowController.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
                'Tests/RetrieverAppChecks/BrowserChecks.swift']
+if terminal:
+    sources = ['Sources/RetrieverApp/SSHTerminalWindowController.swift', 'Tests/RetrieverAppChecks/TerminalChecks.swift']
+package_flags = ['-profile-generate', '-I', str(products), str(products / 'SwiftTerm.o')] if gui or terminal else []
 subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-F', str(products),
                 '-framework', 'RetrieverCore', '-framework', 'AppKit', '-Xlinker', '-rpath', '-Xlinker', str(products)] +
-               sources + ['-o', str(checks / runner)], check=True)
+               package_flags + sources + ['-o', str(checks / runner)], check=True)
 with tempfile.TemporaryDirectory(prefix='ssh-', dir=checks) as temporary:
     root = Path(temporary)
     for name in ('host_key', 'client_key'):
@@ -58,9 +62,9 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM no
 DisableForwarding yes
-PermitTTY no
+PermitTTY {"yes" if terminal else "no"}
 PermitUserRC no
-ForceCommand internal-sftp
+{"" if terminal else "ForceCommand internal-sftp"}
 Subsystem sftp internal-sftp
 ''')
     subprocess.run(['/usr/sbin/sshd', '-t', '-f', str(config)], check=True)
