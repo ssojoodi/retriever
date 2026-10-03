@@ -1,63 +1,59 @@
 # Retriever
 
-Native macOS SFTP file browser and retrieval utility, inspired by Cyberduck's simplicity.
+Native SFTP browser with an embedded SSH terminal. Swift 6, AppKit, macOS 14+, Apple silicon only. Repository: https://github.com/ssojoodi/retriever. MIT licensed.
 
-## Product contract
-- Display and internal name: Retriever. AppKit and Swift 6; macOS 14 minimum.
-- Primary workflow: connect to an SFTP server, browse folders, and transfer individual files.
-- First usable slice: one connection, directory navigation, one download with cancellation and visible errors.
-- Bundle identifiers: `ca.sahand.Retriever`, `ca.sahand.RetrieverCore`, `ca.sahand.RetrieverCoreTests`. Inferred personal namespace; confirm before distribution.
-- One retained browser window, plus auxiliary Help, Downloads, and file Preview windows; closing the last window quits. Follow system light/dark appearance.
-- Successful hosts (server, username, port) and the last visited remote folder persist locally in UserDefaults. Selection remains transient; do not connect automatically on launch. Never persist passwords. Explicitly accepted server keys persist in OpenSSH known_hosts. Closing ends the connection; active transfers must offer cancellation before termination.
-- Public versions use 0.1.0, 0.2.0, 0.3.0, and so on until 1.0.0; increment the middle number for each release. Do not maintain or present a separate build counter. CURRENT_PROJECT_VERSION derives from MARKETING_VERSION, and release metadata uses version only.
-- Direct Developer ID distribution, separately signed and notarized DMG. Apple silicon (arm64) only; release checks reject other binary architectures. Intel and terminal VoiceOver support are outside scope. Release uses -Osize, dead-code stripping and deployment symbol stripping; preserve app/core dSYMs in each release evidence folder, outside the DMG.
-- Initial non-goals: FTP, folder transfers, remote deletion, synchronization, tabs, named bookmarks, App Store. A static download website is now maintained in `web-page/`.
-- MIT licensed; see LICENSE. Copyright 2026 Sahand Sojoodi. Public repository: https://github.com/ssojoodi/retriever.
+## Project rules
 
-## Layout and commands
-Xcode is authoritative. `Sources/RetrieverApp` owns UI; `Sources/RetrieverCore` owns testable connection and transfer behavior; `Tests/RetrieverCoreTests` owns XCTest cases. Explicit project membership is required for new files.
-`make build`, `make build-release`, `make test`, `make check-windows`, `make check-ssh`, `make check-browser`, `make run`, `make assets`, `make paths`, `make help`.
-Generated output: `.build/`; inspected screenshots: `artifacts/verification/`; iteration plans: `docs/`.
-Shared version and signing settings live in `Config/Signing.xcconfig`. Local credentials remain ignored. Unsigned development works without release credentials. Release pipeline is a later milestone and must not report success until signing/notarization and DMG validation pass.
+- Preserve user work; keep changes focused. Prefer native APIs and direct state changes.
+- Create timestamped iteration plans in ignored `docs/`. Commit completed milestones with short messages.
+- Add focused tests for fallible behavior. Verify UI changes in the built app and inspect screenshots.
+- Keep credentials local and ignored. Generated output belongs in `.build/`; screenshots in `artifacts/verification/`.
+- Keep this file and commands current. Do not record session history or machine-specific setup here.
+- One retained browser window plus Help, Downloads, and Preview windows; closing the last window quits. Confirm active SSH termination and offer transfer cancellation before closing.
+- Follow system appearance except for the always-dark terminal. FTP, folder transfers, remote deletion, synchronization, tabs, and App Store distribution are outside scope.
 
-## Working rules
-- Implement the smallest coherent product slice first, then complete the requested workflow.
-- Prefer native APIs and direct state changes over speculative abstractions.
-- Preserve user work and avoid unrelated changes.
-- Add focused tests for independently fallible behavior.
-- Verify UI changes in the actual built app and inspect screenshot evidence.
-- Keep credentials and iteration plans local; docs/ is ignored. Keep generated output isolated.
-- Keep commands and this memory current as architecture changes.
-- Create a new timestamped plan for every iteration. Commit finished milestones with short messages.
+## Layout and verification
 
-## SFTP core
-`SFTPPacket.swift` implements bounded SFTP v3 decoding; `SFTPSession.swift` owns a synchronous process stream and must be used on one dedicated worker, never the main thread. Production uses system SSH with explicit new-host confirmation and rejection of changed keys. UI supplies the app executable as an askpass helper; headless callers use strict batch key/agent authentication. Test injection launches local sftp-server. Remote filenames retain raw bytes. Download publication uses an exclusively created sibling temporary file. The default uses non-replacing renamex_np(RENAME_EXCL); only an explicit replaceApproved policy from the accepted native Save dialog permits atomic replacement. Never unlink the destination first. Reject folder/symlink replacement destinations. `SFTPBrowser` owns the session on an actor with a dedicated Dispatch executor. UI operations pass a lock-protected cancellation signal; reads and writes poll every 100 ms and have a 30-second idle timeout. Complete ordinary server errors and local file errors preserve usable sessions. Cancellation between exchanges can retain the session after bounded handle cleanup; partial exchanges, malformed responses, timeouts, and transport errors invalidate it. The UI keeps the listing visible on errors and offers explicit Reconnect after actual connection loss. SSH diagnostic stderr is drained nonblockingly and capped at 16 KiB for transient error display. The app has an isolated `SSHAskpass` mode for native fingerprint/password/passphrase prompts. Credentials go only to the SSH stdout pipe. Helper exits when its parent SSH exits; negotiation allows five minutes.
+Xcode is authoritative; new files need explicit target membership. UI lives in `Sources/RetrieverApp`, testable behavior in `Sources/RetrieverCore`, and tests in `Tests`.
 
-## Brand assets
-`Brand/Retriever-Logo-Approved.png` is the authoritative approved icon artwork. `Brand/Retriever-AppIcon.png` is the derived app-icon cutout with transparency outside the rounded cream tile. `Brand/RenderIcon.swift` resizes that cutout using AppKit, preserving its composition and alpha. `make assets` regenerates all ten tracked PNG slots and catalog metadata deterministically. Ordinary Xcode and Make builds consume tracked assets.
+- `make build`, `make run`, `make build-release`: development and optimized arm64 builds.
+- `make test`: core XCTest suite.
+- `make check-ssh`: real SSH transport with isolated loopback credentials.
+- `make check-browser`, `make check-terminal`, `make check-windows`: native UI and session checks.
+- `python3 scripts/manual_browser_check.py --shell`: packaged-app fixture; native authentication, Save/Replace, and Finder interactions need manual verification.
+- `python3 scripts/check_release_workflow.py` and `python3 scripts/check_release_publication.py`: release checks without signing credentials.
 
-`make check-ssh` builds and tests the actual SSH transport against a disposable loopback sshd. It uses the same `SFTPSession.sshArguments` as production, with test-only identity and known-host paths. No personal/server credentials or SSH configuration changes are needed. Keep network integration separate from core XCTest.
+SwiftTerm is pinned in the Xcode project and Package.resolved. Builds require the Metal toolchain and one-time Xcode approval of its build-info plugin. Do not disable global plugin validation. Include ThirdPartyNotices.txt in the app bundle.
 
-`make check-browser` compiles production AppKit controller sources and uses an internal session factory to isolate fixture credentials. It verifies native connection/navigation and selected-file retrieval with an explicit destination; it does not prove native save confirmation or packaged-app authentication. The native save callback and `retrieveSelection(to:policy:)` integration entry point share the captured-node retrieval operation.
+## Connections and transfers
 
-## Website release handoff
-`make release` reuses `.build/release/DerivedData`, signs an isolated app copy and branded DMG, notarizes only the DMG, and performs automated signature/staple/Gatekeeper/integrity checks without a manual prompt. It then publishes locally to `web-page/Retriever.dmg`, with checksum and release.json. Previous artifacts are backed up in ignored `docs/dmg-backups/`. Published website download buttons link directly to Retriever.dmg and work without JavaScript. Optional release metadata supplies the artifact version/checksum and must not gate download access. No website upload occurs. `python3 scripts/check_release_publication.py` tests output/backups without credentials; `python3 scripts/check_release_workflow.py` checks noninteractive orchestration and failure-before-publication with mocked signing tools.
+- `SFTPSession` is synchronous and confined to `SFTPBrowser`’s dedicated actor executor, never the main thread. Preserve bounded SFTP v3 decoding and raw filename bytes.
+- Use system SSH. Confirm new host keys and reject changed keys. Native `SSHAskpass` sends credentials only through the SSH stdout pipe and exits with its parent. Never persist passwords.
+- Poll cancellation during I/O. Preserve usable sessions after complete server/local errors; invalidate partial exchanges, malformed responses, timeouts, and transport failures. Keep listings visible and offer Reconnect after connection loss.
+- Downloads use exclusively created sibling temporary files. Default publication uses `renamex_np(RENAME_EXCL)`; only explicit `replaceApproved` from the native Save dialog permits atomic replacement. Never unlink the destination first or replace folders/symlinks.
+- Upload only regular local files opened with `O_NOFOLLOW`. Use exclusive remote temporary files with mode 0600; acknowledge WRITE and CLOSE before publication. Default SFTP RENAME must not replace existing names.
+- Upload replacement requires explicit approval, a regular target, and advertised `posix-rename@openssh.com` version 1. Never delete the target as a fallback. Bound cleanup; report possible leftover temporary files or uncertain publication after transport loss. Never automatically retry an uncertain upload. Refresh and select the uploaded file on success.
 
-## Saved hosts
-`ConnectionHistory` is a main-actor store of successful host/account/port identities and raw folder bytes. `ConnectionSheet` provides the saved-host picker, New connection, editable Remote folder, and Forget. Save only after successful listing; update locations after successful navigation. Forgetting a connected host must not re-add it during navigation. SFTP reconnect falls back to home only on complete path-related server status responses; do not hide transport/authentication/cancellation errors. Inject isolated UserDefaults suites in checks.
+## Browser state
 
-## File tree and previews
-The native outline lazily expands remote folders and retains raw paths for nested downloads. Right-click selects the pointed row and offers Download and Preview; folders/symlinks and busy operations disable these actions. Preview downloads into a private temporary folder and uses QLPreviewView in an auxiliary panel. Close Quick Look before removing its temporary file on close, replacement, or app termination. Preview cancellation uses the shared transfer cancellation path and removes its temporary directory.
+- Save successful host/account/port identities and raw folder paths only after successful listings. Do not auto-connect on launch or persist selection. Forgetting a connected host must not re-add it during navigation.
+- Reconnect may fall back to home only after a complete path-related server error, never after authentication, transport, or cancellation errors.
+- Keep raw paths for nested outline actions. Preserve keyboard focus and arrow navigation while gating remote actions during work.
+- Space previews the selected file only in the outline. Escape closes Preview or cancels its download. Confirm sizes above 1,000,000 bytes or unknown sizes; enforce the streaming limit for unapproved files that grow.
+- Keep the old preview until replacement succeeds. Close Quick Look before deleting its private temporary files on close, replacement, cancellation, or quit.
+- Download history records only successful user downloads, with actual bytes and a local bookmark. Exclude previews, uploads, and failed/cancelled attempts. Clearing history never deletes files. Use isolated UserDefaults in tests.
 
-## Keyboard and download history
-Space previews the selected file only in the outline; Escape closes Preview or cancels its pending download. Keep outline focus and arrow navigation while gating remote actions during work. Previews above 1,000,000 bytes or of unknown size require confirmation; unapproved transfers enforce the same streaming limit for files that grew since listing. Existing previews remain until a replacement succeeds.
+## SSH terminal
 
-`DownloadHistory` persists successful user downloads (never previews or failed/cancelled attempts), including source identity/raw path, completion date, actual bytes, and a local file bookmark. Inject isolated defaults in checks. Downloads (⇧⌘J) opens a reusable window with Show in Finder and Clear History; clearing never deletes files. No credentials are stored. Tests cover connection recovery, explicit replacement, keyboard events, confirmation, and history; native Save/Replace and Finder interaction still require manual verification.
+`SSHTerminalViewController` embeds SwiftTerm in the browser viewport. Files/Terminal switching preserves SSH and browser state; restore focus to the visible view. Confirm replacement, End Session, and browser close/quit even when SSH is hidden. Reap the SSH child after bounded termination.
 
-## Uploads
-Upload (⌘U) uses NSOpenPanel for one regular local file, targeting the displayed remote folder. Uploads are not download-history entries. SFTPSession opens sources with O_NOFOLLOW and validates regular files. Exclusive remote sibling temporary files use mode 0600; acknowledged WRITE and CLOSE precede publication. Default SFTP v3 RENAME must not replace existing names. Explicit native replacement approval uses advertised posix-rename@openssh.com version 1; unsupported servers fail without deleting the target. LSTAT rejects nonregular targets. Cleanup has a two-second bound on aligned sessions; transport loss reports a possible remote temporary file and, during rename, an uncertain publication outcome. Never retry an uncertain upload automatically. Success refreshes the listing and selects the uploaded file. Test SSH fixtures permit writes to generated fixture paths.
+Folders target themselves; files target their parent; symlinks are disabled. `SSHLaunchRequest` quotes literal absolute UTF-8 paths, rejects control characters, and opens no shell if `cd` fails. Keep SSH independent of SFTP, use terminal authentication prompts, and deny remote clipboard requests. Terminal VoiceOver implementation is outside scope.
 
-## SSH terminal feasibility branch
-This branch prototypes SSH into Folder with SwiftTerm 1.20.0 (exact package pin) in an embedded AppKit pane replacing the file viewport. Files/Terminal switches preserve the session and browser state; End Session closes it. Terminal uses fixed dark background/light text regardless of app appearance. Browser close and quit confirm active SSH termination. Files target their parent; folders target themselves; symlinks are disabled. SSHLaunchRequest quotes literal remote folder paths, rejects non-UTF-8/control-character paths, and starts the system SSH client independently of SFTP. Shell access requires a POSIX-compatible server login shell. Credentials are not copied; terminal prompts handle authentication. Remote clipboard requests are denied. Explicit session termination reaps the local SSH child after bounded cleanup. No terminal persistence, tabs, or splits.
+## Assets and releases
 
-SwiftTerm requires the Apple Metal toolchain and approval of its inspected build-info plugin in Xcode. Initial prototype checks used `XCODE_FLAGS=-skipPackagePluginValidation`. The user-approved plugin revision 5d14406844143538cd8f8851d2d8a67c1fe443e5 is now recorded in this Mac’s SwiftPM plugins.json trust file; ordinary Make builds pass with validation enabled. On a fresh Mac, approve the plugin in Xcode once. Do not disable global plugin validation. `make check-terminal` runs a disposable shell-enabled SSH fixture; `python3 scripts/manual_browser_check.py --shell` supports manual checks. Existing browser/window scripts link SwiftTerm for controller compilation. ThirdPartyNotices.txt is included in the app bundle. The feasibility report lives in ignored docs/, screenshots in artifacts/verification/, metrics in .build/terminal-metrics/. Do not merge, bump the release version, or publish this prototype without reviewing the measured cost.
+- Approved artwork: `Brand/Retriever-Logo-Approved.png`. The derived `Retriever-AppIcon.png` preserves transparency outside the rounded tile. `make assets` regenerates tracked icon slots; builds consume those assets.
+- Versions and signing settings: `Config/Signing.xcconfig`. Increment the middle version number until 1.0.0; derive CURRENT_PROJECT_VERSION from MARKETING_VERSION, with no separate build counter.
+- Bundle IDs: `ca.sahand.Retriever`, `ca.sahand.RetrieverCore`, `ca.sahand.RetrieverCoreTests`.
+- Release uses arm64, `-Osize`, dead-code removal, and symbol stripping. Preserve matching app/core dSYMs outside the DMG.
+- `make release` reuses its build cache, signs an isolated app and DMG, notarizes the DMG, and validates before local publication. Do not report success before checks pass. Back up previous artifacts in ignored `docs/dmg-backups/`.
+- Website download links go directly to `web-page/Retriever.dmg` and work without JavaScript or release metadata. Release never uploads the website.

@@ -1,123 +1,82 @@
 # Retriever
 
-**A native Mac app for bringing files home from your servers.**
+**A native Mac app for moving files between your Mac and your servers.**
 
-Retriever started with a small task: grab a few files from a server without opening a terminal. The result is a focused SFTP browser written in Swift and AppKit, inspired by Cyberduck’s simplicity.
+Retriever started with a simple need: grab a few files from a server without using the command line. Written in Swift and AppKit, it provides SFTP browsing, previews, uploads, downloads, and an embedded SSH terminal.
 
-Connect, browse, preview, download, and upload. Retriever uses macOS controls and the system SSH client. This experimental branch embeds SwiftTerm for an ad-hoc SSH terminal.
+[Download for Mac](https://sojoodi.com/apps/Retriever/) · [Release notes](https://sojoodi.com/apps/Retriever/release-notes.html) · [Source code](https://github.com/ssojoodi/retriever)
 
-[Download for Mac](https://sojoodi.com/apps/Retriever/) · [Source code](https://github.com/ssojoodi/retriever) · [Release notes](https://sojoodi.com/apps/Retriever/release-notes.html) · [MIT license](LICENSE)
+![Retriever browsing remote folders](web-page/screenshots/0.2.0/expanded-folders.png)
 
-![Retriever browsing an expanded remote folder](web-page/screenshots/0.2.0/expanded-folders.png)
+## Use Retriever
 
-## Terminal prototype
+Requires an **Apple silicon Mac with macOS 14 or later** and an SFTP server.
 
-This branch adds **SSH into Folder** to the file context menu. A folder opens at that path; a file opens at its parent. The dark terminal fills the file browser area. Use Files / Terminal to switch views without ending SSH; End Session closes it. SSH stays independent of SFTP. Replacing a session or closing the browser with SSH active requires confirmation.
+- Connect with SSH keys, an SSH agent, or a password. Successful connections remember the host and last folder; passwords are never saved.
+- Expand folders in the file tree and navigate with arrow keys.
+- Press **Space** to preview a file and **Escape** to close or cancel the preview. Large files require confirmation.
+- Download with the native Save dialog, or press **⌘U** to upload one file to the current folder. Transfers support cancellation and explicit replacement approval.
+- Open **Downloads (⇧⌘J)** to find previous downloads in Finder or clear the history without deleting files.
+- Right-click **SSH into Folder** to open a dark terminal at that folder, or at a selected file’s parent. **Files / Terminal** switches views without ending SSH; **End Session** closes it.
 
-The prototype pins SwiftTerm 1.20.0. Building requires Apple’s Metal toolchain and approval of SwiftTerm’s build-info plugin in Xcode. On a fresh Mac, open `Retriever.xcodeproj`, build once, and approve `SwiftTermBuildInfoPlugin` when prompted. Xcode remembers approval for that package revision, so subsequent Make builds work without extra flags. `make check-terminal` runs its SSH integration checks; `python3 scripts/manual_browser_check.py --shell` opens a disposable server for manual checks. Dependency notices are in [ThirdPartyNotices.txt](ThirdPartyNotices.txt).
-
-This is a feasibility experiment, not part of the published 0.4.0 release. VoiceOver support for terminal content is outside this feature’s scope.
-
-## Using Retriever
-
-Requires an **Apple silicon Mac with macOS 14 or later**.
-
-- **Return to your servers.** Successful connections remember the host, account, port, and last visited folder.
-- **Browse folders in place.** Expand the file tree, navigate with arrow keys, or double-click a folder to open it.
-- **Preview before saving.** Press Space or choose Preview from a file’s context menu. Escape closes the preview or cancels its download. Files larger than 1 MB require confirmation.
-- **Download where you choose.** Use the native Save dialog, approve replacement of an existing file, and cancel active transfers.
-- **Upload to the current folder.** Choose Upload (⌘U), select one local file, and approve any replacement. Cancel stops an active transfer.
-- **Find previous downloads.** Open Downloads with ⇧⌘J and use Show in Finder. Clearing history leaves your files on disk.
-- **Recover without losing your place.** File errors preserve usable connections. If a connection closes, the listing stays visible and Reconnect lets you resume.
-
-Connect with SSH keys, an SSH agent, or a password. Retriever asks you to verify a new server’s fingerprint and rejects changed host keys. Passwords are never saved; accepted server keys stay in OpenSSH’s `known_hosts` file.
-
-This branch supports SFTP and individual file uploads and downloads. Uploads are not yet in the published 0.3.0 release. FTP, folder transfers, and symbolic-link transfers are not available.
+Retriever asks you to verify new server fingerprints and rejects changed host keys. SSH terminal access requires a POSIX-compatible server shell. FTP, folder transfers, and symbolic-link transfers are not supported.
 
 ## Build and run
 
-You need macOS 14 or later and **full Xcode with a Swift 6 toolchain**. Local development builds are unsigned and need no Apple Developer credentials.
+Install full **Xcode with Swift 6** and Apple’s Metal toolchain. Development builds need no signing credentials.
 
 ```sh
 git clone https://github.com/ssojoodi/retriever.git
 cd retriever
-make build
-make run
+open Retriever.xcodeproj
 ```
 
-`make run` builds the app and opens it. Command-line build output goes to `.build/DerivedData`; `make paths` prints the app location.
-
-To work in Xcode, open `Retriever.xcodeproj`, select the **Retriever** scheme, and run. The Xcode project is the source of truth for builds, so add new Swift files to the appropriate target. Icon assets are already included in the repository.
-
-For an Apple silicon Release build:
+Select the **Retriever** scheme and build once. Approve `SwiftTermBuildInfoPlugin` when Xcode prompts; approval applies to that package revision. If the Metal toolchain is missing, install it with `xcodebuild -downloadComponent MetalToolchain`.
 
 ```sh
-make build-release
+make run             # Build and open the app
+make build-release   # Build and verify an optimized arm64 app
+make paths           # Show output locations
 ```
 
-This builds and verifies arm64 binaries, optimizes for size, and strips release symbols. Signing and notarization happen in the separate release step.
+Xcode is the source of truth; add new Swift files to their targets. Build output stays in `.build/`.
 
-## How it works
+## Architecture
 
-Retriever keeps the interface, connection logic, and SSH transport separate:
-
-```text
-AppKit interface
-      │
-      ▼
-SFTPBrowser actor ──► SFTPSession ──► system SSH ──► SFTP server
-                                          │
-                                          ▼
-                               Native authentication prompts
-```
-
-| Part | Responsibility |
+| Component | Responsibility |
 | --- | --- |
-| [`RetrieverApp`](Sources/RetrieverApp) | AppKit windows, file outline, connection sheet, Quick Look previews, download history, and native SSH authentication prompts. |
-| [`RetrieverCore`](Sources/RetrieverCore) | Connection settings, SFTP packet handling, directory listings, transfers, cancellation, and persisted connection/download metadata. |
-| [`Tests`](Tests) | Core XCTest cases and native UI/SSH integration checks using disposable local fixtures. |
+| [RetrieverApp](Sources/RetrieverApp) | AppKit interface, Quick Look previews, native authentication prompts, and the embedded SwiftTerm view. |
+| [RetrieverCore](Sources/RetrieverCore) | SFTP protocol, transfers, cancellation, and connection/download history. |
+| [Tests](Tests) | Core tests and native UI/SSH checks with disposable local servers. |
 
-`SFTPBrowser` owns the session on a dedicated worker so network reads and writes stay off the main thread. `SFTPSession` speaks SFTP v3 through `/usr/bin/ssh`; SSH handles encryption, authentication, and host-key verification. Remote filenames retain their original bytes.
+`SFTPBrowser` owns `SFTPSession` on a dedicated worker. The session speaks SFTP v3 through the system SSH client, keeping network I/O off the main thread. Transfers use temporary files and publish after completion; replacement requires approval. The terminal uses a separate SSH process, so switching views does not interrupt SFTP.
 
-Downloads go to a temporary file beside the destination and become visible only after completion. Replacement requires explicit approval. Previews use a private temporary directory, which is removed when the preview closes.
+The website is in [web-page](web-page), artwork in [Brand](Brand), and version settings in [Config/Signing.xcconfig](Config/Signing.xcconfig).
 
-Uploads use a private temporary remote file and publish after all writes succeed. Replacement requires server support for atomic rename. If a connection fails, Retriever reports when a temporary file may remain or the final upload outcome is uncertain. Uploaded files have owner-only read/write permissions.
-
-The static download website lives in [`web-page`](web-page). Brand artwork lives in [`Brand`](Brand), and shared version settings live in [`Config/Signing.xcconfig`](Config/Signing.xcconfig).
-
-## Check your changes
+## Test
 
 ```sh
 make test            # Core XCTest suite
-make check-ssh       # Real SSH transport and authentication checks
-make check-windows   # Native window behavior and lifecycle
-make check-browser   # Connection, browsing, previews, downloads, and uploads
+make check-ssh       # SSH transport and authentication
+make check-browser   # Browsing, previews, downloads, and uploads
+make check-terminal  # Embedded terminal and SSH lifecycle
+make check-windows   # Window behavior and lifecycle
 ```
 
-The integration checks need Python 3. Window and browser checks also need a logged-in macOS GUI session. SSH fixtures use temporary keys on a loopback server; no personal server credentials are needed.
+Integration checks require Python 3; UI checks need a logged-in macOS GUI session. Fixtures use temporary SSH keys. For manual testing, run `python3 scripts/manual_browser_check.py --shell`; it prints connection details and stops when the opened app quits.
 
-For a manual check of the built app:
+## Release
 
-```sh
-python3 scripts/manual_browser_check.py
-```
-
-The script opens Retriever and prints the temporary server’s connection details and fingerprint. Quit that app instance to stop the fixture. Native Save/Replace and Finder interactions remain part of manual verification.
-
-## Prepare a release
-
-Copy `release.env.example` to the ignored `release.env` and set an existing Developer ID signing identity and notarization Keychain profile. The file uses Make syntax.
-
-Run:
+Copy `release.env.example` to the ignored `release.env`. Set your Developer ID signing identity and notarization Keychain profile, then run:
 
 ```sh
 make release
 ```
 
-The release process reuses a dedicated Apple silicon Release build cache, signs the app and branded DMG, and submits the DMG to Apple for notarization. After automated validation, it places the DMG, checksum, and release metadata in `web-page/` and backs up previous artifacts in `docs/dmg-backups/`. Matching app and framework dSYM files remain in each local release evidence folder for crash reports. There is no manual confirmation prompt. Upload the website separately.
+The script builds, signs, notarizes, and validates the DMG. It replaces the local website download and metadata in `web-page/`, backing up old artifacts in `docs/dmg-backups/`. Matching dSYM files remain in the release evidence folder for crash reports. Upload the website separately.
 
-Public releases increment the middle version number: **0.1.0 → 0.2.0 → 0.3.0**, continuing until 1.0.0. There is no separate build counter.
+Versions advance **0.1.0 → 0.2.0 → 0.3.0** until 1.0.0, with no separate build counter.
 
 ## License
 
-Retriever is [MIT licensed](LICENSE). Copyright © 2026 Sahand Sojoodi.
+[MIT](LICENSE) · Copyright © 2026 Sahand Sojoodi. Dependency licenses are in [ThirdPartyNotices.txt](ThirdPartyNotices.txt).
