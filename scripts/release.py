@@ -88,11 +88,14 @@ def main():
     derived = release_root / 'DerivedData'
     run('xcrun', 'xcodebuild', '-project', 'Retriever.xcodeproj', '-scheme', 'Retriever',
         '-configuration', 'Release', '-destination', 'generic/platform=macOS', '-derivedDataPath', derived,
-        'CODE_SIGNING_ALLOWED=NO', 'ARCHS=arm64 x86_64', 'ONLY_ACTIVE_ARCH=NO', 'build')
+        'CODE_SIGNING_ALLOWED=NO', 'SWIFT_OPTIMIZATION_LEVEL=-Osize', 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=NO', 'build')
     # Keep the reusable build cache unsigned; sign an isolated copy for this run.
     app = staging / 'Retriever.app'
     run('ditto', derived / 'Build/Products/Release/Retriever.app', app)
-    run('bash', 'scripts/verify_universal.sh', app)
+    run('bash', 'scripts/verify_release.sh', app)
+    # Preserve matching symbols per release, outside the app and DMG.
+    for symbols in ('Retriever.app.dSYM', 'RetrieverCore.framework.dSYM'):
+        run('ditto', derived / 'Build/Products/Release' / symbols, staging / 'symbols' / symbols)
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     version = info['CFBundleShortVersionString']
     if not re.fullmatch(r'\d+\.\d+\.\d+', version) or info['CFBundleVersion'] != version:

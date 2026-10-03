@@ -101,6 +101,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private let browser: SFTPBrowser
     private let history: ConnectionHistory
     private let downloads: DownloadHistory
+    private let sshTerminal: SSHTerminalViewController
     private var downloadsWindow: DownloadsWindowController?
     private var connected = false
     private var preparingPreview = false
@@ -114,6 +115,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private var roots: [FileNode] = []
     private var completingExpansion = false
     private let scroll = NSScrollView()
+    private var showingTerminal = false
+    private let paneSwitch = NSSegmentedControl(labels: ["Files", "Terminal"], trackingMode: .selectOne, target: nil, action: nil)
+    private let endSession = NSButton(title: "End Session", target: nil, action: nil)
     private let progress = NSProgressIndicator()
     private let empty = NSTextField(labelWithString: "Open a connection to browse your files.")
     private var directory: RemoteDirectory?
@@ -121,7 +125,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private(set) var busy = false
     private var afterCleanup: (@MainActor () -> Void)?
 
-    init(browser: SFTPBrowser = SFTPBrowser(askpass: Bundle.main.executableURL), history: ConnectionHistory = ConnectionHistory(), downloads: DownloadHistory = DownloadHistory()) {
+    init(browser: SFTPBrowser = SFTPBrowser(askpass: Bundle.main.executableURL), history: ConnectionHistory = ConnectionHistory(), downloads: DownloadHistory = DownloadHistory(), sshTerminal: SSHTerminalViewController = SSHTerminalViewController()) {
+        self.sshTerminal = sshTerminal
         self.browser = browser
         self.history = history
         self.downloads = downloads
@@ -172,6 +177,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             item.target = self
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         }
+        contextMenu.addItem(.separator())
+        let sshItem = contextMenu.addItem(withTitle: "SSH into Folder", action: #selector(sshIntoFolder(_:)), keyEquivalent: "")
+        sshItem.target = self
+        sshItem.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
         table.menu = contextMenu
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -185,15 +194,32 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         progress.style = .spinning
         progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
-        for view in [pathField, scroll, status, empty, progress] {
+        paneSwitch.target = self
+        paneSwitch.action = #selector(switchPane(_:))
+        paneSwitch.selectedSegment = 0
+        endSession.target = self
+        endSession.action = #selector(endTerminal(_:))
+        endSession.bezelStyle = .rounded
+        let header = NSStackView(views: [pathField, paneSwitch, endSession])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 8
+        pathField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        pathField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for view in [header, scroll, status, empty, progress, sshTerminal.view] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            pathField.topAnchor.constraint(equalTo: content.topAnchor, constant: 10),
-            pathField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            pathField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            scroll.topAnchor.constraint(equalTo: pathField.bottomAnchor, constant: 10),
+            header.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
+            header.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            header.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            header.heightAnchor.constraint(greaterThanOrEqualToConstant: 26),
+            sshTerminal.view.topAnchor.constraint(equalTo: scroll.topAnchor),
+            sshTerminal.view.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
+            sshTerminal.view.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
+            sshTerminal.view.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
             scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -10),
             status.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16), status.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
@@ -239,6 +265,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private func enabled(_ action: Selector?) -> Bool {
         if action == #selector(cancel(_:)) { return busy }
         if action == #selector(showDownloads(_:)) { return true }
+        if showingTerminal && action != #selector(openConnection(_:)) && action != #selector(disconnect(_:)) { return false }
         if busy { return false }
         if action == #selector(reconnect(_:)) { return !connected && activeSettings != nil }
         if action != #selector(openConnection(_:)) && !connected { return false }
@@ -247,6 +274,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         case #selector(goUp(_:)): return directory != nil && directory?.path != Data("/".utf8)
         case #selector(refresh(_:)), #selector(disconnect(_:)), #selector(uploadSelected(_:)): return directory != nil
         case #selector(downloadSelected(_:)), #selector(previewSelected(_:)): return selected.map { !$0.attributes.isDirectory && !$0.attributes.isSymbolicLink } ?? false
+        case #selector(sshIntoFolder(_:)): return selected.map { !$0.attributes.isSymbolicLink && ($0.attributes.isDirectory || $0.attributes.permissions.map { $0 & 0xF000 == 0x8000 } == true) } ?? false
         case #selector(openSelected(_:)): return selected != nil
         default: return false
         }
@@ -255,10 +283,15 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private func updateControls() {
         for item in window?.toolbar?.items ?? [] { item.isEnabled = enabled(item.action) }
         table.isEnabled = true
-        scroll.isHidden = directory == nil
-        empty.isHidden = !(directory == nil || directory?.entries.isEmpty == true)
+        scroll.isHidden = showingTerminal || directory == nil
+        empty.isHidden = showingTerminal || !(directory == nil || directory?.entries.isEmpty == true)
         empty.stringValue = directory == nil ? "Open a connection to browse your files." : "This folder is empty."
         pathField.stringValue = directory.map { String(decoding: $0.path, as: UTF8.self) } ?? ""
+        sshTerminal.view.isHidden = !showingTerminal
+        paneSwitch.isHidden = sshTerminal.terminal == nil
+        endSession.isHidden = sshTerminal.terminal == nil
+        paneSwitch.selectedSegment = showingTerminal ? 1 : 0
+        if showingTerminal { pathField.stringValue = sshTerminal.sessionTitle }
         if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
     }
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
@@ -368,7 +401,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
                 table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             }
         }
-        if window?.isKeyWindow == true, window?.attachedSheet == nil, window?.firstResponder === window || window?.firstResponder == nil { window?.makeFirstResponder(table) }
+        if window?.isKeyWindow == true, window?.attachedSheet == nil, window?.firstResponder === window || window?.firstResponder == nil { window?.makeFirstResponder(showingTerminal ? sshTerminal.terminal : table) }
         status.stringValue = "\(result.entries.count) items"
         updateControls()
     }
@@ -428,6 +461,31 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         if node.entry.attributes.isDirectory { navigate(node.path) }
         else { downloadSelected(sender) }
     }
+    @objc func sshIntoFolder(_ sender: Any?) {
+        guard window?.attachedSheet == nil, enabled(#selector(sshIntoFolder(_:))), let node = selectedNode, let settings = activeSettings else { return }
+        do {
+            let request = try SSHLaunchRequest(settings: settings, path: node.path, isDirectory: node.entry.attributes.isDirectory)
+            if sshTerminal.open(request) { showTerminalPane(true) }
+        } catch {
+            if let window { NSAlert(error: error).beginSheetModal(for: window) { _ in } }
+        }
+    }
+    func showTerminalPane(_ show: Bool) {
+        showingTerminal = show
+        updateControls()
+        window?.makeFirstResponder(show ? sshTerminal.terminal : table)
+    }
+    @objc private func switchPane(_ sender: NSSegmentedControl) {
+        showTerminalPane(sender.selectedSegment == 1)
+    }
+    @objc private func endTerminal(_ sender: Any?) {
+        guard sshTerminal.confirmEndingSession() else { return }
+        sshTerminal.closeSession()
+        showTerminalPane(false)
+    }
+    func confirmTerminalQuit() -> Bool { sshTerminal.confirmEndingSession("End the SSH session and quit Retriever?") }
+    func stopTerminal() { sshTerminal.stop() }
+
     @objc func uploadSelected(_ sender: Any?) {
         guard window?.attachedSheet == nil, enabled(#selector(uploadSelected(_:))), let directory, let window else { return }
         let panel = NSOpenPanel()
@@ -478,7 +536,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             do {
                 show(try await browser.directory(folder, cancellation: signal))
                 try await restoreExpanded(expanded, selection: path, signal: signal)
-                window?.makeFirstResponder(table)
+                window?.makeFirstResponder(showingTerminal ? sshTerminal.terminal : table)
                 status.stringValue = "Uploaded \(source.lastPathComponent)"
             } catch {
                 status.stringValue = "Uploaded \(source.lastPathComponent); folder refresh did not finish."
@@ -593,7 +651,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         panel.close()
         if let previewDirectory { try? FileManager.default.removeItem(at: previewDirectory) }
         previewDirectory = nil
-        if window?.isVisible == true { window?.makeKeyAndOrderFront(nil); window?.makeFirstResponder(table) }
+        if window?.isVisible == true { window?.makeKeyAndOrderFront(nil); window?.makeFirstResponder(showingTerminal ? sshTerminal.terminal : table) }
     }
     @objc func showDownloads(_ sender: Any?) {
         if downloadsWindow == nil { downloadsWindow = DownloadsWindowController(history: downloads) }
@@ -624,7 +682,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     /// Returns true when immediate closing is safe; otherwise resolves the user's
     /// choice and defers the completion until the worker finishes transfer cleanup.
     func requestClose(afterCancellation: @escaping @MainActor () -> Void) -> Bool {
-        guard busy else { return true }
+        guard busy else {
+            guard confirmTerminalQuit() else { return false }
+            sshTerminal.stop()
+            return true
+        }
         guard afterCleanup == nil else { return false }
         let alert = NSAlert()
         alert.messageText = "Cancel the current operation and close?"
@@ -632,6 +694,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         alert.addButton(withTitle: "Keep Working")
         alert.addButton(withTitle: "Cancel and Close")
         guard alert.runModal() == .alertSecondButtonReturn else { return false }
+        guard confirmTerminalQuit() else { return false }
+        sshTerminal.stop()
         // A worker completion can arrive while the modal alert runs.
         guard busy else { return true }
         afterCleanup = afterCancellation
@@ -645,6 +709,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === previewPanel { closePreview(); return }
         closePreview()
+        sshTerminal.stop()
         let browser = browser
         Task { await browser.disconnect() }
     }

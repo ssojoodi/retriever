@@ -4,15 +4,23 @@
 
 Retriever started with a small task: grab a few files from a server without opening a terminal. The result is a focused SFTP browser written in Swift and AppKit, inspired by Cyberduck’s simplicity.
 
-Connect, browse, preview, download, and upload. Retriever uses macOS controls and the system SSH client, with no third-party app dependencies.
+Connect, browse, preview, download, and upload. Retriever uses macOS controls and the system SSH client. Retriever embeds SwiftTerm for an ad-hoc SSH terminal.
 
 [Download for Mac](https://sojoodi.com/apps/Retriever/) · [Source code](https://github.com/ssojoodi/retriever) · [Release notes](https://sojoodi.com/apps/Retriever/release-notes.html) · [MIT license](LICENSE)
 
 ![Retriever browsing an expanded remote folder](web-page/screenshots/0.2.0/expanded-folders.png)
 
+## SSH terminal
+
+Choose **SSH into Folder** from the file context menu. A folder opens at that path; a file opens at its parent. The dark terminal fills the file browser area. Use Files / Terminal to switch views without ending SSH; End Session closes it. SSH stays independent of SFTP. Replacing a session or closing the browser with SSH active requires confirmation.
+
+Retriever pins SwiftTerm 1.20.0. Building requires Apple’s Metal toolchain and approval of SwiftTerm’s build-info plugin in Xcode. On a fresh Mac, open `Retriever.xcodeproj`, build once, and approve `SwiftTermBuildInfoPlugin` when prompted. Xcode remembers approval for that package revision, so subsequent Make builds work without extra flags. `make check-terminal` runs its SSH integration checks; `python3 scripts/manual_browser_check.py --shell` opens a disposable server for manual checks. Dependency notices are in [ThirdPartyNotices.txt](ThirdPartyNotices.txt).
+
+VoiceOver support for terminal content is outside this feature’s scope.
+
 ## Using Retriever
 
-Requires **macOS 14 or later**. Release builds include Apple silicon and Intel binaries; Intel runtime testing remains pending.
+Requires an **Apple silicon Mac with macOS 14 or later**.
 
 - **Return to your servers.** Successful connections remember the host, account, port, and last visited folder.
 - **Browse folders in place.** Expand the file tree, navigate with arrow keys, or double-click a folder to open it.
@@ -41,13 +49,13 @@ make run
 
 To work in Xcode, open `Retriever.xcodeproj`, select the **Retriever** scheme, and run. The Xcode project is the source of truth for builds, so add new Swift files to the appropriate target. Icon assets are already included in the repository.
 
-For a universal Release build:
+For an Apple silicon Release build:
 
 ```sh
-make build-universal
+make build-release
 ```
 
-This builds and verifies both arm64 and x86_64 slices. Signing and notarization happen in the separate release step.
+This builds and verifies arm64 binaries, optimizes for size, and strips release symbols. Signing and notarization happen in the separate release step.
 
 ## How it works
 
@@ -106,7 +114,7 @@ Run:
 make release
 ```
 
-The release process reuses a dedicated universal Release build cache, signs the app and branded DMG, and submits the DMG to Apple for notarization. After automated validation, it places the DMG, checksum, and release metadata in `web-page/` and backs up previous artifacts in `docs/dmg-backups/`. There is no manual confirmation prompt. Upload the website separately.
+The release process reuses a dedicated Apple silicon Release build cache, signs the app and branded DMG, and submits the DMG to Apple for notarization. After automated validation, it places the DMG, checksum, and release metadata in `web-page/` and backs up previous artifacts in `docs/dmg-backups/`. Matching app and framework dSYM files remain in each local release evidence folder for crash reports. There is no manual confirmation prompt. Upload the website separately.
 
 Public releases increment the middle version number: **0.1.0 → 0.2.0 → 0.3.0**, continuing until 1.0.0. There is no separate build counter.
 
