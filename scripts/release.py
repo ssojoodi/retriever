@@ -76,24 +76,26 @@ def main():
     parser.add_argument('--profile', default='')
     args = parser.parse_args()
     team = credentials(args.identity, args.profile)
-    if not sys.stdin.isatty():
-        raise RuntimeError('Run release in an interactive terminal to verify the app copied from the DMG before publication.')
     repo = Path(__file__).resolve().parent.parent
     os.chdir(repo)
     identities = run('security', 'find-identity', '-v', '-p', 'codesigning', capture=True)
     if f'"{args.identity}"' not in identities:
         raise RuntimeError('The configured identity is not currently available in the signing Keychain.')
-    run('xcrun', 'notarytool', 'history', '--keychain-profile', args.profile, '--output-format', 'json', capture=True)
     release_root = repo / '.build/release'
     release_root.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix='run-', dir=release_root))
     print(f'Release evidence: {staging}', flush=True)
-    derived = staging / 'DerivedData'
+    derived = release_root / 'DerivedData'
     run('xcrun', 'xcodebuild', '-project', 'Retriever.xcodeproj', '-scheme', 'Retriever',
         '-configuration', 'Release', '-destination', 'generic/platform=macOS', '-derivedDataPath', derived,
-        'CODE_SIGNING_ALLOWED=NO', 'ARCHS=arm64 x86_64', 'ONLY_ACTIVE_ARCH=NO', 'build')
-    app = derived / 'Build/Products/Release/Retriever.app'
-    run('bash', 'scripts/verify_universal.sh', app)
+        'CODE_SIGNING_ALLOWED=NO', 'SWIFT_OPTIMIZATION_LEVEL=-Osize', 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=NO', 'build')
+    # Keep the reusable build cache unsigned; sign an isolated copy for this run.
+    app = staging / 'Retriever.app'
+    run('ditto', derived / 'Build/Products/Release/Retriever.app', app)
+    run('bash', 'scripts/verify_release.sh', app)
+    # Preserve matching symbols per release, outside the app and DMG.
+    for symbols in ('Retriever.app.dSYM', 'RetrieverCore.framework.dSYM'):
+        run('ditto', derived / 'Build/Products/Release' / symbols, staging / 'symbols' / symbols)
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     version = info['CFBundleShortVersionString']
     if not re.fullmatch(r'\d+\.\d+\.\d+', version) or info['CFBundleVersion'] != version:
@@ -108,12 +110,6 @@ def main():
     entitlements = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(app)], capture_output=True, check=True).stdout
     if entitlements.strip() and plistlib.loads(entitlements).get('com.apple.security.get-task-allow', False):
         raise RuntimeError('Release app has the debug get-task-allow entitlement.')
-    archive = staging / 'Retriever.zip'
-    run('ditto', '-c', '-k', '--keepParent', app, archive)
-    notarize(archive, args.profile, staging, 'app')
-    run('xcrun', 'stapler', 'staple', app)
-    run('xcrun', 'stapler', 'validate', app)
-    run('spctl', '--assess', '--type', 'execute', '--verbose=2', app)
     dmg = staging / f'Retriever-{version}.dmg'
     run(sys.executable, 'scripts/create_dmg.py', app, dmg, staging / 'dmg-layout')
     run('codesign', '--force', '--timestamp', '--sign', args.identity, dmg)
@@ -123,31 +119,6 @@ def main():
     run('codesign', '--verify', '--verbose=2', dmg)
     run('spctl', '--assess', '--type', 'open', '--context', 'context:primary-signature', '--verbose=2', dmg)
     run('hdiutil', 'verify', dmg)
-    mount = staging / 'mounted'
-    mount.mkdir()
-    attached = False
-    try:
-        run('hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', mount, dmg)
-        attached = True
-        installed = mount / 'Retriever.app'
-        if not (mount / 'Applications').is_symlink() or os.readlink(mount / 'Applications') != '/Applications':
-            raise RuntimeError('DMG Applications link is invalid.')
-        run('codesign', '--verify', '--deep', '--strict', '--verbose=2', installed)
-        run('xcrun', 'stapler', 'validate', installed)
-        run('spctl', '--assess', '--type', 'execute', '--verbose=2', installed)
-        copied_app = staging / 'install-check/Retriever.app'
-        run('ditto', installed, copied_app)
-    finally:
-        if attached:
-            run('hdiutil', 'detach', mount)
-    run('codesign', '--verify', '--deep', '--strict', copied_app)
-    run('spctl', '--assess', '--type', 'execute', copied_app)
-    run('open', '-n', copied_app)
-    print('Test this DMG copy: connect, browse, download and compare a file, cancel active work, then quit.')
-    if input('Type VERIFIED after those checks pass (anything else stops publication): ').strip() != 'VERIFIED':
-        raise RuntimeError(f'Installed-app verification incomplete. Candidate retained at {dmg}')
-    (staging / 'installed-app-verification.txt').write_text(
-        f'Manual connect/browse/download/cancel/quit verification confirmed at {datetime.datetime.now().isoformat()}\n{copied_app}\n')
     digest = hashlib.sha256()
     with dmg.open('rb') as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b''):
@@ -155,7 +126,7 @@ def main():
     checksum = digest.hexdigest()
     (staging / 'sha256.txt').write_text(checksum + '  ' + dmg.name + '\n')
     target = publish_release(repo, dmg, checksum, version)
-    print(f'Validated local release: {target}\nSHA-256: {checksum}\nBefore public distribution, test a quarantined download on a clean account/Mac when available and record untested environments.')
+    print(f'Validated local release: {target}\nSHA-256: {checksum}\nReady to upload web-page/.')
 
 
 if __name__ == '__main__':

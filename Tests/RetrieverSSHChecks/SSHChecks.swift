@@ -23,6 +23,15 @@ struct SSHChecks {
         let expected = try Data(contentsOf: root.appendingPathComponent("files/payload.bin"))
         let downloaded = try Data(contentsOf: destination)
         precondition(expected == downloaded, "Authenticated download bytes differ")
+        let uploadPath = SFTPSession.appending(Data("uploaded.bin".utf8), to: path)
+        try session.upload(destination, to: uploadPath)
+        let uploaded = try Data(contentsOf: root.appendingPathComponent("files/uploaded.bin"))
+        precondition(uploaded == expected, "Authenticated upload bytes differ")
+        try Data("replacement".utf8).write(to: destination)
+        try session.upload(destination, to: uploadPath, policy: .replaceApproved)
+        let replaced = try Data(contentsOf: root.appendingPathComponent("files/uploaded.bin"))
+        precondition(replaced == Data("replacement".utf8))
+        print("PASS: authenticated upload and explicit remote replacement")
         for (hosts, key, expectedMessage) in [
             ("empty_hosts", "client_key", "Host key verification failed"),
             ("changed_hosts", "client_key", "REMOTE HOST IDENTIFICATION HAS CHANGED"),

@@ -28,6 +28,7 @@ enum AppMenu {
         app.addItem(withTitle: "Quit Retriever", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let file = submenu("File")
         file.addItem(withTitle: "Open Connection…", action: #selector(MainWindowController.openConnection(_:)), keyEquivalent: "o")
+        file.addItem(withTitle: "Upload File…", action: #selector(MainWindowController.uploadSelected(_:)), keyEquivalent: "u")
         file.addItem(withTitle: "Download Selected File…", action: #selector(MainWindowController.downloadSelected(_:)), keyEquivalent: "d")
         file.addItem(withTitle: "Preview Selected File", action: #selector(MainWindowController.previewSelected(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Reconnect", action: #selector(MainWindowController.reconnect(_:)), keyEquivalent: "")

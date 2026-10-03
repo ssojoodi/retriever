@@ -7,9 +7,9 @@ if [[ ! -d "$products/RetrieverCore.framework" ]]; then
   exit 1
 fi
 mkdir -p .build/checks
-xcrun swiftc -swift-version 6 -F "$products" -framework RetrieverCore -framework AppKit \
+xcrun swiftc -profile-generate -swift-version 6 -F "$products" -framework RetrieverCore -framework AppKit -I "$products" "$products/SwiftTerm.o" \
   -Xlinker -rpath -Xlinker "$(cd "$products" && pwd)" \
-  Sources/RetrieverApp/AppDelegate.swift Sources/RetrieverApp/AppMenu.swift \
+  Sources/RetrieverApp/SSHTerminalViewController.swift Sources/RetrieverApp/AppDelegate.swift Sources/RetrieverApp/AppMenu.swift \
   Sources/RetrieverApp/ConnectionSheet.swift Sources/RetrieverApp/DownloadsWindowController.swift Sources/RetrieverApp/MainWindowController.swift \
   Sources/RetrieverApp/SSHAskpass.swift Tests/RetrieverAppChecks/WebsiteScreenshots.swift \
   -o .build/checks/WebsiteScreenshots

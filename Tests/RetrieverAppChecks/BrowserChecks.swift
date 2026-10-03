@@ -84,10 +84,11 @@ struct BrowserChecks {
         let blankEvent = NSEvent.mouseEvent(with: .rightMouseDown, location: blankLocation, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
         precondition(table.menu(for: blankEvent) == nil, "Empty space must not act on the prior selection")
         let folderMenu = contextMenu(row: 0)!
-        precondition(folderMenu.items.map(\.title) == ["Download", "Preview"])
-        precondition(folderMenu.items.allSatisfy { !$0.isEnabled }, "Folders cannot be downloaded or previewed")
+        precondition(folderMenu.items.map(\.title) == ["Download", "Preview", "", "SSH into Folder"])
+        precondition(folderMenu.items.prefix(2).allSatisfy { !$0.isEnabled }, "Folders cannot be downloaded or previewed")
+        precondition(folderMenu.items.last!.isEnabled, "Folders support SSH")
         let fileMenu = contextMenu(row: 2)!
-        precondition(table.selectedRow == 2 && fileMenu.items.allSatisfy(\.isEnabled), "Right click must target the pointed file")
+        precondition(table.selectedRow == 2 && fileMenu.items.filter { !$0.isSeparatorItem }.allSatisfy(\.isEnabled), "Right click must target the pointed file")
         fileMenu.performActionForItem(at: 0)
         waitUntil("Context Download uses save panel") { window.attachedSheet is NSSavePanel }
         (window.attachedSheet as! NSSavePanel).cancel(nil)
@@ -275,6 +276,58 @@ struct BrowserChecks {
         waitUntil("Approved large preview") { !controller.busy && NSApp.windows.contains { $0.isVisible && $0.contentView is QLPreviewView } }
         controller.closePreview()
         precondition(downloads.entries.isEmpty, "Previews must not enter cleared download history")
+        controller.uploadSelected(nil)
+        waitUntil("Upload picker") { window.attachedSheet is NSOpenPanel }
+        (window.attachedSheet as! NSOpenPanel).cancel(nil)
+        waitUntil("Upload picker cancellation") { window.attachedSheet == nil }
+        precondition(!controller.busy)
+        let cancelledSource = root.appendingPathComponent("cancel-upload.bin")
+        try Data(repeating: 9, count: 1_000_000).write(to: cancelledSource)
+        controller.uploadFile(cancelledSource)
+        controller.cancel(nil)
+        waitUntil("Cancelled upload") { !controller.busy }
+        precondition(!FileManager.default.fileExists(atPath: root.appendingPathComponent("files/cancel-upload.bin").path))
+        precondition(table.numberOfRows == 2)
+        if let sheet = window.attachedSheet {
+            descendants(sheet.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "OK" }!.performClick(nil)
+            waitUntil("Dismiss cancelled upload warning") { window.attachedSheet == nil }
+        }
+        let reconnect = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "reconnect" }!
+        if reconnect.isEnabled {
+            controller.reconnect(nil)
+            waitUntil("Reconnect after cancelled upload") { !controller.busy }
+        }
+        let uploadSource = root.appendingPathComponent("upload-test.txt")
+        let uploadTarget = root.appendingPathComponent("files/upload-test.txt")
+        let uploadBytes = Data("Uploaded with Retriever.".utf8)
+        try uploadBytes.write(to: uploadSource)
+        controller.uploadFile(uploadSource)
+        waitUntil("Upload and refreshed listing") { !controller.busy }
+        let uploadResult = try Data(contentsOf: uploadTarget)
+        precondition(uploadResult == uploadBytes && table.numberOfRows == 3)
+        precondition(table.selectedRow >= 0 && window.firstResponder === table)
+        try Data("replacement upload".utf8).write(to: uploadSource)
+        controller.uploadFile(uploadSource)
+        waitUntil("Remote replacement confirmation") { !controller.busy && window.attachedSheet != nil }
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Cancel" }!.performClick(nil)
+        waitUntil("Decline remote replacement") { window.attachedSheet == nil }
+        let unchangedUpload = try Data(contentsOf: uploadTarget)
+        precondition(unchangedUpload == uploadBytes)
+        controller.uploadFile(uploadSource)
+        waitUntil("Second replacement confirmation") { !controller.busy && window.attachedSheet != nil }
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Replace" }!.performClick(nil)
+        waitUntil("Approved upload replacement") { window.attachedSheet == nil && !controller.busy && (try? Data(contentsOf: uploadTarget)) == Data("replacement upload".utf8) }
+        let replacedUpload = try Data(contentsOf: uploadTarget)
+        precondition(replacedUpload == Data("replacement upload".utf8))
+        precondition(downloads.entries.isEmpty, "Uploads must not enter download history")
+        for _ in 0..<5 { pump() }
+        let uploadShot = Process()
+        uploadShot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        uploadShot.arguments = ["-x", "-l", String(window.windowNumber), "artifacts/verification/upload-browser.png"]
+        try uploadShot.run()
+        uploadShot.waitUntilExit()
+        precondition(uploadShot.terminationStatus == 0)
+        print("PASS: native upload picker cancellation, upload, refreshed selection, replacement approval and rejection")
         controller.disconnect(nil)
         waitUntil("Disconnect") { !controller.busy && table.numberOfRows == 0 }
         controller.openConnection(nil)

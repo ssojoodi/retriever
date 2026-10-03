@@ -57,6 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Browse and retrieve
         Click a folder’s arrow to expand it inline, or double-click to open it. Use Up (⌘[) to return to the enclosing folder or Refresh (⌘R) to reload. Select a regular file and choose Download (⌘D). Right-click a file for Download or Preview, or press Space to preview the selected file. Escape closes Preview or cancels its download. Files larger than 1 MB require confirmation. Preview opens a temporary copy in Quick Look; closing it removes the copy. Choose a local filename; approve Replace in the save dialog to replace an existing file after the download completes. Folder and symbolic-link downloads are not supported yet.
 
+        Upload
+        Choose Upload (⌘U) to send one local file to the displayed remote folder. Approve Replace to replace a remote file; this requires server support for atomic replacement. Folders and symbolic links are not supported. Uploaded files have owner-only read/write permissions. If the connection fails, an alert identifies any temporary remote file that may remain.
+
         Cancel and disconnect
         Cancel (⌘.) stops the current operation and removes partial downloads. The connection stays open when the protocol can be safely reused. Disconnect ends an idle connection. Closing or quitting during work asks whether to cancel first.
 
@@ -80,6 +83,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let canQuit = controller.requestClose { NSApp.terminate(nil) }
         return canQuit ? .terminateNow : .terminateCancel
     }
-    func applicationWillTerminate(_ notification: Notification) { controller?.closePreview() }
+    func applicationWillTerminate(_ notification: Notification) { controller?.stopTerminal(); controller?.closePreview() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }

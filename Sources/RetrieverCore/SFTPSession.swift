@@ -6,6 +6,11 @@ public enum DownloadDestinationPolicy: Sendable {
     case replaceApproved
 }
 
+public enum UploadDestinationPolicy: Sendable {
+    case exclusive
+    case replaceApproved
+}
+
 /// A synchronous session. Own and call it on a dedicated serial worker, never the UI thread.
 /// SSH owns encryption, authentication and host-key verification.
 public final class SFTPSession {
@@ -16,6 +21,7 @@ public final class SFTPSession {
     private var diagnosticBytes = Data()
     private var diagnosticsOpen = false
     private var requestID: UInt32 = 0
+    private var supportsAtomicReplacement = false
     private var connected = false
     private var exchangeInFlight = false
     private var cleanupDeadline: TimeInterval?
@@ -82,7 +88,13 @@ public final class SFTPSession {
             guard try response.byte() == 2 else { throw SFTPError.malformedPacket }
             let version = try response.uint32()
             guard version == 3 else { throw SFTPError.unsupportedVersion(version) }
-            while response.remaining > 0 { _ = try response.bytes(); _ = try response.bytes() }
+            while response.remaining > 0 {
+                let name = try response.bytes()
+                let version = try response.bytes()
+                if name == Data("posix-rename@openssh.com".utf8), version == Data("1".utf8) {
+                    supportsAtomicReplacement = true
+                }
+            }
             connected = true
             negotiating = false
         } catch {
@@ -210,6 +222,105 @@ public final class SFTPSession {
             guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { throw SFTPError.invalidDestination }
         } else if errno != ENOENT {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    private func uploadTarget(_ path: Data, policy: UploadDestinationPolicy) throws {
+        var payload = SFTPWriter()
+        payload.bytes(path)
+        do {
+            var response = try request(7, payload: payload, expecting: 105) // LSTAT, never follow links.
+            let attributes = try response.attributes()
+            guard response.remaining == 0 else { throw SFTPError.malformedPacket }
+            guard attributes.permissions.map({ $0 & 0xF000 == 0x8000 }) == true else { throw SFTPError.invalidUploadFile }
+            if policy == .exclusive { throw SFTPError.uploadDestinationExists }
+        } catch SFTPError.server(2, _) { /* Destination does not exist. */ }
+        if policy == .replaceApproved, !supportsAtomicReplacement { throw SFTPError.uploadReplacementUnsupported }
+    }
+
+    /// Publish only after all writes and CLOSE succeed. Never unlink the destination.
+    @discardableResult
+    public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, progress: (UInt64) -> Void = { _ in }) throws -> UInt64 {
+        let descriptor = source.withUnsafeFileSystemRepresentation { Darwin.open($0!, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) }
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? file.close() }
+        var original = stat()
+        guard fstat(descriptor, &original) == 0 else { throw POSIXError(.EIO) }
+        guard original.st_mode & S_IFMT == S_IFREG else { throw SFTPError.invalidUploadFile }
+        try uploadTarget(path, policy: policy)
+        guard let slash = path.lastIndex(of: 47) else { throw SFTPError.invalidUploadFile }
+        let temporary = Self.appending(Data(".retriever-\(UUID().uuidString).partial".utf8), to: Data(path.prefix(through: slash)))
+        var handle: Data?
+        var created = false
+        var opening = false
+        var publishing = false
+        do {
+            var open = SFTPWriter()
+            open.bytes(temporary)
+            open.uint32(2 | 8 | 32) // WRITE | CREAT | EXCL
+            open.uint32(4) // permissions: private until published, and thereafter.
+            open.uint32(0o600)
+            opening = true
+            var response = try request(3, payload: open, expecting: 102)
+            created = true
+            handle = try response.bytes()
+            guard response.remaining == 0 else { throw SFTPError.malformedPacket }
+            opening = false
+            var offset: UInt64 = 0
+            while true {
+                try cancellation.check()
+                guard let bytes = try file.read(upToCount: 32768), !bytes.isEmpty else { break }
+                var write = SFTPWriter()
+                write.bytes(handle!)
+                write.uint64(offset)
+                write.bytes(bytes)
+                _ = try request(6, payload: write, expecting: 101)
+                offset += UInt64(bytes.count)
+                progress(offset)
+            }
+            var final = stat()
+            guard fstat(descriptor, &final) == 0,
+                  original.st_size == final.st_size, offset == UInt64(original.st_size),
+                  original.st_mtimespec.tv_sec == final.st_mtimespec.tv_sec,
+                  original.st_mtimespec.tv_nsec == final.st_mtimespec.tv_nsec,
+                  original.st_ctimespec.tv_sec == final.st_ctimespec.tv_sec,
+                  original.st_ctimespec.tv_nsec == final.st_ctimespec.tv_nsec else { throw SFTPError.uploadSourceChanged }
+            // CLOSE invalidates the handle even if the server reports a flush error.
+            let closing = handle!
+            try cancellation.check()
+            handle = nil
+            try closeHandle(closing)
+            try uploadTarget(path, policy: policy)
+            var rename = SFTPWriter()
+            if policy == .replaceApproved { rename.string("posix-rename@openssh.com") }
+            rename.bytes(temporary)
+            rename.bytes(path)
+            publishing = true
+            _ = try request(policy == .replaceApproved ? 200 : 18, payload: rename, expecting: 101)
+            return offset
+        } catch {
+            let uncertainPublication = publishing && exchangeInFlight
+            let uncertainCreation = opening && exchangeInFlight
+            handleFailure(error)
+            if created, isUsable {
+                let originalCancellation = cancellation
+                cancellation = SFTPCancellation()
+                cleanupDeadline = ProcessInfo.processInfo.systemUptime + 2
+                defer { cancellation = originalCancellation; cleanupDeadline = nil }
+                do {
+                    if let handle { try closeHandle(handle) }
+                    var remove = SFTPWriter()
+                    remove.bytes(temporary)
+                    _ = try request(13, payload: remove, expecting: 101)
+                    created = false
+                } catch { handleFailure(error) }
+            }
+            if created || uncertainCreation {
+                let outcome = uncertainPublication ? "The server may have completed the upload. Check the destination before retrying." : "The upload did not complete."
+                throw SFTPError.uploadIncomplete("\(error.localizedDescription)\n\n\(outcome) A temporary file may remain at:\n\(String(decoding: temporary, as: UTF8.self))")
+            }
+            throw error
         }
     }
 

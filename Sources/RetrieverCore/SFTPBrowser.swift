@@ -114,6 +114,21 @@ public actor SFTPBrowser {
         catch { handleFailure(error); throw error }
     }
 
+    @discardableResult
+    public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+        guard let session else { throw SFTPError.disconnected }
+        session.cancellation = cancellation
+        do {
+            var lastUpdate: TimeInterval = 0
+            let total = try session.upload(source, to: path, policy: policy) { bytes in
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - lastUpdate >= 0.1 { progress(bytes); lastUpdate = now }
+            }
+            progress(total)
+            return total
+        } catch { handleFailure(error); throw error }
+    }
+
     public func disconnect() {
         session?.disconnect()
         session = nil

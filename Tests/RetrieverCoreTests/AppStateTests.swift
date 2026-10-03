@@ -62,4 +62,35 @@ final class ConnectionHistoryTests: XCTestCase {
         let data = Data(#"{"host":"-option","username":"user","port":22}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(ConnectionSettings.self, from: data))
     }
+    func testSSHFolderTargetsAndLiteralQuoting() throws {
+        let settings = try ConnectionSettings(host: "example.test", username: "tester", port: "2222")
+        let folder = "/tmp/space café ' ; $(touch NEVER)"
+        let request = try SSHLaunchRequest(settings: settings, path: Data((folder + "/file.txt").utf8), isDirectory: false)
+        XCTAssertEqual(request.folder, folder)
+        XCTAssertEqual(try SSHLaunchRequest(settings: settings, path: Data(folder.utf8), isDirectory: true).folder, folder)
+        XCTAssertEqual(try SSHLaunchRequest(settings: settings, path: Data("/file".utf8), isDirectory: false).folder, "/")
+        XCTAssertEqual(request.arguments[request.arguments.firstIndex(of: "-p")! + 1], "2222")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-s"]
+        let input = Pipe(); process.standardInput = input
+        let output = Pipe(); process.standardOutput = output
+        try process.run()
+        try input.fileHandleForWriting.write(contentsOf: Data(("printf '%s' " + SSHLaunchRequest.quote(folder)).utf8))
+        try input.fileHandleForWriting.close()
+        let bytes = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertEqual(bytes, Data(folder.utf8))
+    }
+
+    func testSSHRejectsUnsupportedPathsAndRemovesAskpass() throws {
+        let settings = try ConnectionSettings(host: "example.test", username: "tester", port: "22")
+        for path in [Data([47, 255]), Data("relative".utf8), Data("/folder\ncommand".utf8), Data([47, 0])] {
+            XCTAssertThrowsError(try SSHLaunchRequest(settings: settings, path: path, isDirectory: true))
+        }
+        let environment = SSHLaunchRequest.environment(["SSH_AUTH_SOCK": "/agent", "SSH_ASKPASS": "/helper", "SSH_ASKPASS_REQUIRE": "force", "RETRIEVER_ASKPASS": "1"])
+        XCTAssertEqual(environment, ["SSH_AUTH_SOCK=/agent", "TERM=xterm-256color"])
+    }
+
 }
