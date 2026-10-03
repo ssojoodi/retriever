@@ -29,7 +29,8 @@ with tempfile.TemporaryDirectory() as temporary:
         if args[:2] == ('xcrun', 'xcodebuild'):
             assert args[args.index('-derivedDataPath') + 1] == str(repo / '.build/release/DerivedData')
             assert 'ARCHS=arm64' in args
-        elif args[0] == 'ditto':
+            assert 'SWIFT_OPTIMIZATION_LEVEL=-Osize' in args
+        elif args[0] == 'ditto' and args[2].endswith('.app'):
             app = Path(args[2])
             (app / 'Contents').mkdir(parents=True)
             (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
@@ -58,6 +59,8 @@ with tempfile.TemporaryDirectory() as temporary:
              patch('subprocess.run', side_effect=metadata):
             main()
             assert len(submissions) == 1
+            for symbols in ('Retriever.app.dSYM', 'RetrieverCore.framework.dSYM'):
+                assert any(call[0] == 'ditto' and call[2].endswith('/symbols/' + symbols) for call in calls)
             target = repo / 'web-page/Retriever.dmg'
             original = target.read_bytes()
             manifest = (target.parent / 'release.json').read_bytes()

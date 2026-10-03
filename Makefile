@@ -6,13 +6,14 @@ DESTINATION ?= platform=macOS
 DERIVED_DATA ?= .build/DerivedData
 RELEASE_DERIVED_DATA ?= .build/ReleaseVerification
 APP = $(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/Retriever.app
+RELEASE_FLAGS = SWIFT_OPTIMIZATION_LEVEL=-Osize
 XCODE_FLAGS ?=
-XCODE = xcrun xcodebuild $(XCODE_FLAGS) -project "$(PROJECT)" -scheme "$(SCHEME)" -configuration "$(CONFIGURATION)" -destination "$(DESTINATION)" -derivedDataPath "$(DERIVED_DATA)" CODE_SIGNING_ALLOWED=NO
+XCODE = xcrun xcodebuild $(XCODE_FLAGS) $(if $(filter Release,$(CONFIGURATION)),$(RELEASE_FLAGS)) -project "$(PROJECT)" -scheme "$(SCHEME)" -configuration "$(CONFIGURATION)" -destination "$(DESTINATION)" -derivedDataPath "$(DERIVED_DATA)" CODE_SIGNING_ALLOWED=NO
 -include release.env
 .PHONY: build-release check-terminal check-browser check-ssh assets check-windows build buildlocal test run paths help release clean
 build: buildlocal
 build-release:
-	xcrun xcodebuild $(XCODE_FLAGS) -project "$(PROJECT)" -scheme "$(SCHEME)" -configuration Release -destination "generic/platform=macOS" -derivedDataPath "$(RELEASE_DERIVED_DATA)" CODE_SIGNING_ALLOWED=NO "ARCHS=arm64" ONLY_ACTIVE_ARCH=NO build
+	xcrun xcodebuild $(XCODE_FLAGS) $(RELEASE_FLAGS) -project "$(PROJECT)" -scheme "$(SCHEME)" -configuration Release -destination "generic/platform=macOS" -derivedDataPath "$(RELEASE_DERIVED_DATA)" CODE_SIGNING_ALLOWED=NO "ARCHS=arm64" ONLY_ACTIVE_ARCH=NO build
 	bash scripts/verify_release.sh "$(RELEASE_DERIVED_DATA)/Build/Products/Release/Retriever.app"
 buildlocal:
 	$(XCODE) build

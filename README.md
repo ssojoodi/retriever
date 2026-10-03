@@ -55,7 +55,7 @@ For an Apple silicon Release build:
 make build-release
 ```
 
-This builds and verifies arm64 binaries. Signing and notarization happen in the separate release step.
+This builds and verifies arm64 binaries, optimizes for size, and strips release symbols. Signing and notarization happen in the separate release step.
 
 ## How it works
 
@@ -114,7 +114,7 @@ Run:
 make release
 ```
 
-The release process reuses a dedicated Apple silicon Release build cache, signs the app and branded DMG, and submits the DMG to Apple for notarization. After automated validation, it places the DMG, checksum, and release metadata in `web-page/` and backs up previous artifacts in `docs/dmg-backups/`. There is no manual confirmation prompt. Upload the website separately.
+The release process reuses a dedicated Apple silicon Release build cache, signs the app and branded DMG, and submits the DMG to Apple for notarization. After automated validation, it places the DMG, checksum, and release metadata in `web-page/` and backs up previous artifacts in `docs/dmg-backups/`. Matching app and framework dSYM files remain in each local release evidence folder for crash reports. There is no manual confirmation prompt. Upload the website separately.
 
 Public releases increment the middle version number: **0.1.0 → 0.2.0 → 0.3.0**, continuing until 1.0.0. There is no separate build counter.
 

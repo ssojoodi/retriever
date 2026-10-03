@@ -11,7 +11,7 @@ import time
 
 repo = Path(__file__).resolve().parent.parent
 os.chdir(repo)
-products = (Path(sys.argv[1] if len(sys.argv) > 1 else '.build/DerivedData') / 'Build/Products/Debug').resolve()
+products = (Path(sys.argv[1] if len(sys.argv) > 1 else '.build/DerivedData') / f'Build/Products/{os.environ.get("CONFIGURATION", "Debug")}').resolve()
 checks = repo / '.build/checks'
 checks.mkdir(parents=True, exist_ok=True)
 gui = '--gui' in sys.argv
