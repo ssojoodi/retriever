@@ -45,7 +45,7 @@
 
 /* Begin PBXFileReference section */
  E00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = text; path = ThirdPartyNotices.txt; sourceTree = SOURCE_ROOT; };
- C00000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalWindowController.swift; sourceTree = "<group>"; };
+ C00000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalViewController.swift; sourceTree = "<group>"; };
  C00000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHLaunchRequest.swift; sourceTree = "<group>"; };
  C00000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsWindowController.swift; sourceTree = "<group>"; };
  C00000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadHistory.swift; sourceTree = "<group>"; };

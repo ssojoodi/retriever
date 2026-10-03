@@ -16,8 +16,14 @@ struct TerminalChecks {
         let folder = root.appendingPathComponent("files/SSH café ' $(literal)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let request = try SSHLaunchRequest(settings: settings, path: Data(folder.path.utf8), isDirectory: true)
-        let controller = SSHTerminalWindowController(sshOptions: options)
+        let controller = SSHTerminalViewController(sshOptions: options)
+        let browser = MainWindowController(sshTerminal: controller)
+        let host = browser.window!
+        browser.showWindow(nil)
+        host.makeKeyAndOrderFront(nil)
         controller.open(request)
+        browser.showTerminalPane(true)
+        precondition(controller.terminal?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
         app.activate(ignoringOtherApps: true)
         let view = controller.terminal!
         func output() -> String {
@@ -27,6 +33,13 @@ struct TerminalChecks {
         view.send(txt: "printf '\\nREADY_FOLDER='; /bin/pwd; printf 'READY_END\\n'\n")
         wait("SSH working directory") { output().contains("READY_FOLDER=" + folder.path) }
         precondition(controller.active && controller.window!.firstResponder === view)
+        let pid = view.process.shellPid
+        browser.showTerminalPane(false)
+        precondition(controller.active && controller.view.isHidden)
+        browser.showTerminalPane(true)
+        precondition(controller.active && !controller.view.isHidden && view.process.shellPid == pid)
+        precondition(host.firstResponder === view)
+        precondition(view.nativeBackgroundColor.usingColorSpace(.genericGray)!.whiteComponent < 0.15)
         precondition(controller.clipboardRead(source: view) == nil)
         controller.window!.setContentSize(NSSize(width: 720, height: 440))
         pump()
@@ -57,14 +70,22 @@ struct TerminalChecks {
         try shot.run(); shot.waitUntilExit()
         precondition(shot.terminationStatus == 0)
         let currentPID = next.process.shellPid
+        browser.showTerminalPane(false)
+        let keepOpen = choose("Keep Session")
+        precondition(!browser.requestClose(afterCancellation: {}))
+        keepOpen.invalidate()
+        precondition(controller.active && next.window === host)
         let close = choose("End Session")
-        controller.window!.performClose(nil)
+        precondition(browser.requestClose(afterCancellation: {}))
         close.invalidate()
+        controller.closeSession()
         precondition(!controller.active && kill(currentPID, 0) == -1 && errno == ESRCH)
         // A failed cd must terminate SSH, not leave an interactive shell at home.
         controller.open(try SSHLaunchRequest(settings: settings, path: Data(folder.appendingPathComponent("missing").path.utf8), isDirectory: true))
         wait("Missing folder exits") { !controller.active }
-        controller.window!.performClose(nil)
+        controller.closeSession()
+        browser.showTerminalPane(false)
+        host.close()
         print("PASS: real PTY SSH, quoted folder, keyboard focus, resizing, Ctrl-C, replacement and close cleanup, failed cd")
     }
     static func pump() {

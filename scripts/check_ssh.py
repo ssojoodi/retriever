@@ -18,12 +18,12 @@ gui = '--gui' in sys.argv
 terminal = '--terminal' in sys.argv
 runner = 'TerminalChecks' if terminal else ('BrowserChecks' if gui else 'SSHChecks')
 sources = ['Tests/RetrieverSSHChecks/SSHChecks.swift']
-if gui:
+if gui or terminal:
     sources = ['Sources/RetrieverApp/AppDelegate.swift', 'Sources/RetrieverApp/AppMenu.swift',
-               'Sources/RetrieverApp/SSHTerminalWindowController.swift', 'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/DownloadsWindowController.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
+               'Sources/RetrieverApp/SSHTerminalViewController.swift', 'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/DownloadsWindowController.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
                'Tests/RetrieverAppChecks/BrowserChecks.swift']
 if terminal:
-    sources = ['Sources/RetrieverApp/SSHTerminalWindowController.swift', 'Tests/RetrieverAppChecks/TerminalChecks.swift']
+    sources[-1] = 'Tests/RetrieverAppChecks/TerminalChecks.swift'
 package_flags = ['-profile-generate', '-I', str(products), str(products / 'SwiftTerm.o')] if gui or terminal else []
 subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-F', str(products),
                 '-framework', 'RetrieverCore', '-framework', 'AppKit', '-Xlinker', '-rpath', '-Xlinker', str(products)] +

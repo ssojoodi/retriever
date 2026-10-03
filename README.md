@@ -12,7 +12,7 @@ Connect, browse, preview, download, and upload. Retriever uses macOS controls an
 
 ## Terminal prototype
 
-This branch adds **SSH into Folder** to the file context menu. A folder opens at that path; a file opens at its parent. The session uses a separate Retriever window and stays independent of SFTP. Opening another session or closing an active one requires confirmation.
+This branch adds **SSH into Folder** to the file context menu. A folder opens at that path; a file opens at its parent. The dark terminal fills the file browser area. Use Files / Terminal to switch views without ending SSH; End Session closes it. SSH stays independent of SFTP. Replacing a session or closing the browser with SSH active requires confirmation.
 
 The prototype pins SwiftTerm 1.20.0. Building requires Apple’s Metal toolchain and approval of SwiftTerm’s build-info plugin in Xcode. On a fresh Mac, open `Retriever.xcodeproj`, build once, and approve `SwiftTermBuildInfoPlugin` when prompted. Xcode remembers approval for that package revision, so subsequent Make builds work without extra flags. `make check-terminal` runs its SSH integration checks; `python3 scripts/manual_browser_check.py --shell` opens a disposable server for manual checks. Dependency notices are in [ThirdPartyNotices.txt](ThirdPartyNotices.txt).
 

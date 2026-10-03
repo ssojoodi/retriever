@@ -4,15 +4,21 @@ import RetrieverCore
 
 @MainActor
 private final class SSHView: LocalProcessTerminalView {
+    func configureDarkColors() {
+        nativeBackgroundColor = NSColor(calibratedWhite: 0.08, alpha: 1)
+        nativeForegroundColor = NSColor(calibratedWhite: 0.90, alpha: 1)
+        caretColor = NSColor(calibratedWhite: 0.90, alpha: 1)
+        caretTextColor = NSColor(calibratedWhite: 0.08, alpha: 1)
+    }
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        configureNativeColors()
+        configureDarkColors()
     }
 }
 
 /// One ad-hoc session. SwiftTerm owns terminal emulation, PTY I/O and resizing.
 @MainActor
-final class SSHTerminalWindowController: NSWindowController, NSWindowDelegate,
+final class SSHTerminalViewController: NSViewController,
     @preconcurrency LocalProcessTerminalViewDelegate, @preconcurrency TerminalViewDelegate {
     private(set) var terminal: LocalProcessTerminalView?
     var active: Bool { terminal?.process.running == true }
@@ -21,23 +27,21 @@ final class SSHTerminalWindowController: NSWindowController, NSWindowDelegate,
     // Integration checks supply isolated identity/known-host options.
     init(sshOptions: [String] = []) {
         self.sshOptions = sshOptions
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 540),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "SSH — Retriever"
-        window.minSize = NSSize(width: 480, height: 300)
-        window.isReleasedWhenClosed = false
-        super.init(window: window)
-        window.delegate = self
-        window.center()
+        super.init(nibName: nil, bundle: nil)
     }
+    override func loadView() { view = NSView() }
+    var window: NSWindow? { view.window }
+    private(set) var sessionTitle = ""
     required init?(coder: NSCoder) { fatalError("Programmatic window") }
 
-    func open(_ request: SSHLaunchRequest) {
-        guard confirmEndingSession("End the current SSH session and open another?") else { return }
+    @discardableResult
+    func open(_ request: SSHLaunchRequest) -> Bool {
+        guard confirmEndingSession("End the current SSH session and open another?") else { return false }
         stop()
-        guard let window else { return }
-        let view = SSHView(frame: window.contentView!.bounds)
-        view.configureNativeColors()
+        terminal?.removeFromSuperview()
+        let view = SSHView(frame: self.view.bounds)
+        view.appearance = NSAppearance(named: .darkAqua)
+        view.configureDarkColors()
         view.optionAsMetaKey = false
         view.autoresizingMask = [.width, .height]
         view.processDelegate = self
@@ -45,14 +49,13 @@ final class SSHTerminalWindowController: NSWindowController, NSWindowDelegate,
         view.terminalDelegate = self
         view.setAccessibilityLabel("SSH terminal")
         terminal = view
-        window.contentView = view
-        window.title = request.title + " — Retriever SSH"
-        showWindow(nil)
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(view)
+        self.view.addSubview(view)
+        sessionTitle = request.title
+        window?.makeFirstResponder(view)
         view.startProcess(executable: "/usr/bin/ssh", args: sshOptions + request.arguments,
                           environment: SSHLaunchRequest.environment(ProcessInfo.processInfo.environment))
         if !view.process.running { view.feed(text: "Unable to start SSH.\r\n") }
+        return true
     }
 
     func confirmEndingSession(_ message: String = "End the active SSH session?") -> Bool {
@@ -84,13 +87,16 @@ final class SSHTerminalWindowController: NSWindowController, NSWindowDelegate,
             usleep(10_000)
         }
     }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { confirmEndingSession() }
-    func windowWillClose(_ notification: Notification) { stop() }
+    func closeSession() {
+        stop()
+        terminal?.removeFromSuperview()
+        terminal = nil
+    }
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         guard source === terminal else { return }
         source.feed(text: "\r\n[SSH session ended]\r\n")
-        window?.title += " — Ended"
+
     }
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}

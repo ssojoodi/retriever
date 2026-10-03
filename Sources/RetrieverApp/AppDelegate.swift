@@ -80,7 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let controller else { return .terminateNow }
-        guard controller.confirmTerminalQuit() else { return .terminateCancel }
         let canQuit = controller.requestClose { NSApp.terminate(nil) }
         return canQuit ? .terminateNow : .terminateCancel
     }
