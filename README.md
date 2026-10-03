@@ -4,19 +4,19 @@
 
 Retriever started with a small task: grab a few files from a server without opening a terminal. The result is a focused SFTP browser written in Swift and AppKit, inspired by Cyberduck’s simplicity.
 
-Connect, browse, preview, download, and upload. Retriever uses macOS controls and the system SSH client. This experimental branch embeds SwiftTerm for an ad-hoc SSH terminal.
+Connect, browse, preview, download, and upload. Retriever uses macOS controls and the system SSH client. Retriever embeds SwiftTerm for an ad-hoc SSH terminal.
 
 [Download for Mac](https://sojoodi.com/apps/Retriever/) · [Source code](https://github.com/ssojoodi/retriever) · [Release notes](https://sojoodi.com/apps/Retriever/release-notes.html) · [MIT license](LICENSE)
 
 ![Retriever browsing an expanded remote folder](web-page/screenshots/0.2.0/expanded-folders.png)
 
-## Terminal prototype
+## SSH terminal
 
-This branch adds **SSH into Folder** to the file context menu. A folder opens at that path; a file opens at its parent. The dark terminal fills the file browser area. Use Files / Terminal to switch views without ending SSH; End Session closes it. SSH stays independent of SFTP. Replacing a session or closing the browser with SSH active requires confirmation.
+Choose **SSH into Folder** from the file context menu. A folder opens at that path; a file opens at its parent. The dark terminal fills the file browser area. Use Files / Terminal to switch views without ending SSH; End Session closes it. SSH stays independent of SFTP. Replacing a session or closing the browser with SSH active requires confirmation.
 
-The prototype pins SwiftTerm 1.20.0. Building requires Apple’s Metal toolchain and approval of SwiftTerm’s build-info plugin in Xcode. On a fresh Mac, open `Retriever.xcodeproj`, build once, and approve `SwiftTermBuildInfoPlugin` when prompted. Xcode remembers approval for that package revision, so subsequent Make builds work without extra flags. `make check-terminal` runs its SSH integration checks; `python3 scripts/manual_browser_check.py --shell` opens a disposable server for manual checks. Dependency notices are in [ThirdPartyNotices.txt](ThirdPartyNotices.txt).
+Retriever pins SwiftTerm 1.20.0. Building requires Apple’s Metal toolchain and approval of SwiftTerm’s build-info plugin in Xcode. On a fresh Mac, open `Retriever.xcodeproj`, build once, and approve `SwiftTermBuildInfoPlugin` when prompted. Xcode remembers approval for that package revision, so subsequent Make builds work without extra flags. `make check-terminal` runs its SSH integration checks; `python3 scripts/manual_browser_check.py --shell` opens a disposable server for manual checks. Dependency notices are in [ThirdPartyNotices.txt](ThirdPartyNotices.txt).
 
-This is a feasibility experiment, not part of the published 0.4.0 release. VoiceOver support for terminal content is outside this feature’s scope.
+VoiceOver support for terminal content is outside this feature’s scope.
 
 ## Using Retriever
 
