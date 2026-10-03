@@ -15,15 +15,16 @@ products = (Path(sys.argv[1] if len(sys.argv) > 1 else '.build/DerivedData') / f
 checks = repo / '.build/checks'
 checks.mkdir(parents=True, exist_ok=True)
 gui = '--gui' in sys.argv
-terminal = '--terminal' in sys.argv
-runner = 'TerminalChecks' if terminal else ('BrowserChecks' if gui else 'SSHChecks')
+screenshots = '--screenshots' in sys.argv
+terminal = '--terminal' in sys.argv or screenshots
+runner = 'ReleaseScreenshots' if screenshots else 'TerminalChecks' if terminal else ('BrowserChecks' if gui else 'SSHChecks')
 sources = ['Tests/RetrieverSSHChecks/SSHChecks.swift']
 if gui or terminal:
     sources = ['Sources/RetrieverApp/AppDelegate.swift', 'Sources/RetrieverApp/AppMenu.swift',
                'Sources/RetrieverApp/SSHTerminalViewController.swift', 'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/DownloadsWindowController.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
                'Tests/RetrieverAppChecks/BrowserChecks.swift']
 if terminal:
-    sources[-1] = 'Tests/RetrieverAppChecks/TerminalChecks.swift'
+    sources[-1] = f'Tests/RetrieverAppChecks/{runner}.swift'
 package_flags = ['-profile-generate', '-I', str(products), str(products / 'SwiftTerm.o')] if gui or terminal else []
 subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-F', str(products),
                 '-framework', 'RetrieverCore', '-framework', 'AppKit', '-Xlinker', '-rpath', '-Xlinker', str(products)] +
