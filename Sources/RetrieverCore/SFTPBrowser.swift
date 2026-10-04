@@ -93,14 +93,35 @@ public actor SFTPBrowser {
         }
     }
 
+    public func attributes(at path: Data, cancellation: SFTPCancellation) throws -> RemoteAttributes? {
+        guard let session else { throw SFTPError.disconnected }
+        session.cancellation = cancellation
+        do { return try session.attributes(at: path) }
+        catch { handleFailure(error); throw error }
+    }
+
+    public func createDirectory(at path: Data, cancellation: SFTPCancellation) throws {
+        guard let session else { throw SFTPError.disconnected }
+        session.cancellation = cancellation
+        do { try session.createDirectory(at: path) }
+        catch { handleFailure(error); throw error }
+    }
+
     @discardableResult
     public func download(_ path: Data, to destination: URL, policy: DownloadDestinationPolicy = .exclusive, maximumBytes: UInt64? = nil, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+        guard session != nil else { throw SFTPError.disconnected }
+        let directory = try LocalTransferDirectory(url: destination.deletingLastPathComponent())
+        return try download(path, to: directory, name: destination.lastPathComponent, policy: policy, maximumBytes: maximumBytes, cancellation: cancellation, progress: progress)
+    }
+
+    @discardableResult
+    public func download(_ path: Data, to directory: LocalTransferDirectory, name: String, policy: DownloadDestinationPolicy = .exclusive, maximumBytes: UInt64? = nil, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
         guard let session else { throw SFTPError.disconnected }
         session.cancellation = cancellation
         do {
             var lastUpdate: TimeInterval = 0
             var received: UInt64 = 0
-            let total = try session.download(path, to: destination, policy: policy, maximumBytes: maximumBytes) { bytes in
+            let total = try session.download(path, to: directory, name: name, policy: policy, maximumBytes: maximumBytes) { bytes in
                 received = bytes
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastUpdate >= 0.1 {
@@ -116,11 +137,18 @@ public actor SFTPBrowser {
 
     @discardableResult
     public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+        guard session != nil else { throw SFTPError.disconnected }
+        let directory = try LocalTransferDirectory(url: source.deletingLastPathComponent())
+        return try upload(from: directory, name: source.lastPathComponent, to: path, policy: policy, cancellation: cancellation, progress: progress)
+    }
+
+    @discardableResult
+    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
         guard let session else { throw SFTPError.disconnected }
         session.cancellation = cancellation
         do {
             var lastUpdate: TimeInterval = 0
-            let total = try session.upload(source, to: path, policy: policy) { bytes in
+            let total = try session.upload(from: directory, name: name, to: path, policy: policy) { bytes in
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastUpdate >= 0.1 { progress(bytes); lastUpdate = now }
             }

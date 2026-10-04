@@ -522,6 +522,96 @@ final class SFTPTests: XCTestCase {
         }
     }
 
+    func testRemoteDirectoryOperationsAndNonFollowingAttributes() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let browser = SFTPBrowser(initialPath: Data(fixture.path.utf8)) { _, signal in
+            try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [], cancellation: signal)
+        }
+        _ = try await browser.connect(ConnectionSettings(host: "fixture", username: "test", port: "22"), cancellation: SFTPCancellation())
+        let folder = fixture.appendingPathComponent("empty")
+        let path = Data(folder.path.utf8)
+        let missing = try await browser.attributes(at: path, cancellation: SFTPCancellation())
+        XCTAssertNil(missing)
+        try await browser.createDirectory(at: path, cancellation: SFTPCancellation())
+        let attributes = try await browser.attributes(at: path, cancellation: SFTPCancellation())
+        XCTAssertEqual(attributes?.isDirectory, true)
+        let empty = try await browser.directory(path, cancellation: SFTPCancellation())
+        XCTAssertTrue(empty.entries.isEmpty)
+        let link = fixture.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: folder)
+        let linked = try await browser.attributes(at: Data(link.path.utf8), cancellation: SFTPCancellation())
+        XCTAssertEqual(linked?.isSymbolicLink, true)
+        do {
+            try await browser.createDirectory(at: path, cancellation: SFTPCancellation())
+            XCTFail("Existing directory must require separate merge approval")
+        } catch {}
+        let cancelled = SFTPCancellation()
+        cancelled.cancel()
+        do {
+            try await browser.createDirectory(at: Data(fixture.appendingPathComponent("cancelled").path.utf8), cancellation: cancelled)
+            XCTFail("Cancelled mkdir must not run")
+        } catch is CancellationError {}
+        let connected = await browser.isConnected
+        XCTAssertTrue(connected)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.appendingPathComponent("cancelled").path))
+        await browser.disconnect()
+    }
+
+    func testLocalTreeRejectsSymlinksAndTraversal() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = try LocalTransferDirectory(url: fixture)
+        let child = try root.createDirectory(named: "empty")
+        XCTAssertTrue(try child.entries().isEmpty)
+        try Data("visible".utf8).write(to: fixture.appendingPathComponent(".hidden"))
+        try FileManager.default.createSymbolicLink(at: fixture.appendingPathComponent("link"), withDestinationURL: child.url)
+        XCTAssertEqual(try root.attributes(of: "link")?.kind, .symbolicLink)
+        XCTAssertNil(try root.attributes(of: "absent"))
+        XCTAssertThrowsError(try root.openDirectory(named: "link"))
+        XCTAssertThrowsError(try LocalTransferDirectory(url: fixture.appendingPathComponent("link/nested")))
+        for name in ["", ".", "..", "../escape", "a/b", "a\0b"] {
+            XCTAssertThrowsError(try root.createDirectory(named: name))
+            XCTAssertThrowsError(try root.attributes(of: name))
+        }
+        XCTAssertEqual(try root.entries().map(\.name), [".hidden", "empty", "link"])
+        XCTAssertEqual(try root.entries().map(\.name), [".hidden", "empty", "link"], "Enumeration must not reuse a spent directory offset")
+        let cancelled = SFTPCancellation()
+        cancelled.cancel()
+        XCTAssertThrowsError(try root.entries(cancellation: cancelled)) { XCTAssertTrue($0 is CancellationError) }
+    }
+
+    func testDirectoryHandlesKeepTransfersInsideOriginalParent() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = try LocalTransferDirectory(url: fixture)
+        let destination = try root.createDirectory(named: "destination")
+        let outside = try root.createDirectory(named: "outside")
+        let source = fixture.appendingPathComponent("source")
+        let bytes = Data(repeating: 79, count: 70_000)
+        try bytes.write(to: source)
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { session.disconnect() }
+        var moved = false
+        try session.download(Data(source.path.utf8), to: destination, name: "result") { _ in
+            guard !moved else { return }
+            moved = true
+            do {
+                try FileManager.default.moveItem(at: destination.url, to: fixture.appendingPathComponent("retained"))
+                try FileManager.default.createSymbolicLink(at: destination.url, withDestinationURL: outside.url)
+            } catch { XCTFail("Could not replace destination parent: \(error)") }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.url.appendingPathComponent("result").path))
+        XCTAssertEqual(try Data(contentsOf: fixture.appendingPathComponent("retained/result")), bytes)
+        let target = fixture.appendingPathComponent("uploaded")
+        try session.upload(from: destination, name: "result", to: Data(target.path.utf8))
+        XCTAssertEqual(try Data(contentsOf: target), bytes)
+        XCTAssertThrowsError(try session.upload(destination.url.appendingPathComponent("result"), to: Data(fixture.appendingPathComponent("not-created").path.utf8)))
+        XCTAssertThrowsError(try session.download(Data(source.path.utf8), to: destination.url.appendingPathComponent("not-created")))
+        XCTAssertTrue(try outside.entries().isEmpty)
+        XCTAssertFalse(try destination.entries().contains { $0.name.hasSuffix(".partial") })
+    }
+
     private func makeFixture() throws -> URL {
         let result = FileManager.default.temporaryDirectory.appendingPathComponent("retriever-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: result, withIntermediateDirectories: false)

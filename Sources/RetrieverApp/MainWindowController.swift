@@ -46,7 +46,9 @@ private final class FileOutlineView: NSOutlineView {
         guard isEnabled, canOpenMenu?() != false, window?.attachedSheet == nil else { return nil }
         let clickedRow = row(at: convert(event.locationInWindow, from: nil))
         guard clickedRow >= 0 else { return nil }
-        selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
+        if !selectedRowIndexes.contains(clickedRow) {
+            selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
+        }
         return menu
     }
 
@@ -117,7 +119,33 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private let scroll = NSScrollView()
     private var showingTerminal = false
     private let paneSwitch = NSSegmentedControl(labels: ["Files", "Terminal"], trackingMode: .selectOne, target: nil, action: nil)
-    private let endSession = NSButton(title: "End Session", target: nil, action: nil)
+    private let closeTerminal = NSButton(title: "Close Terminal", target: nil, action: nil)
+    private let syncLabel = NSTextField(labelWithString: "")
+    private var pendingShellDirectory: (Data, ConnectionSettings)?
+    private var connectionGeneration = UUID()
+    private var pendingPromises: [PendingPromise] = []
+    private var activePromiseGroup: PromiseGroup?
+    private var preparedPromiseGroup: PromiseGroup?
+    private var applyFileConflict: TransferDecision?
+    private var conflictAlert: NSAlert?
+
+    private final class PromiseGroup {
+        let generation: UUID
+        let settings: ConnectionSettings
+        var cancelled = false
+        var fileConflict: TransferDecision?
+        var expectedPaths = Set<Data>()
+        var completedPaths = Set<Data>()
+        var items: [TransferItem] = []
+        var summary = TransferSummary()
+        var resultsShown = false
+        init(generation: UUID, settings: ConnectionSettings) { self.generation = generation; self.settings = settings }
+    }
+    private struct PendingPromise {
+        let item: TransferItem
+        let group: PromiseGroup
+        let completion: @Sendable (Error?) -> Void
+    }
     private let progress = NSProgressIndicator()
     private let empty = NSTextField(labelWithString: "Open a connection to browse your files.")
     private var directory: RemoteDirectory?
@@ -159,6 +187,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         }
         table.delegate = self
         table.dataSource = self
+        table.allowsMultipleSelection = true
+        table.registerForDraggedTypes([.fileURL])
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        table.setDraggingSourceOperationMask([], forLocal: true)
         table.outlineTableColumn = table.tableColumns.first
         table.indentationPerLevel = 24
         table.rowHeight = 30
@@ -197,16 +229,20 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         paneSwitch.target = self
         paneSwitch.action = #selector(switchPane(_:))
         paneSwitch.selectedSegment = 0
-        endSession.target = self
-        endSession.action = #selector(endTerminal(_:))
-        endSession.bezelStyle = .rounded
-        let header = NSStackView(views: [pathField, paneSwitch, endSession])
+        closeTerminal.target = self
+        closeTerminal.action = #selector(endTerminal(_:))
+        closeTerminal.bezelStyle = .rounded
+        syncLabel.font = .systemFont(ofSize: 11)
+        syncLabel.textColor = .secondaryLabelColor
+        syncLabel.lineBreakMode = .byTruncatingTail
+        syncLabel.isHidden = true
+        let header = NSStackView(views: [pathField, paneSwitch, closeTerminal])
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = 8
         pathField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         pathField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for view in [header, scroll, status, empty, progress, sshTerminal.view] {
+        for view in [header, scroll, status, empty, progress, sshTerminal.view, syncLabel] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
         }
@@ -224,14 +260,39 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             scroll.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -10),
             status.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16), status.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
             status.trailingAnchor.constraint(equalTo: progress.leadingAnchor, constant: -8),
+            syncLabel.leadingAnchor.constraint(equalTo: status.leadingAnchor),
+            syncLabel.trailingAnchor.constraint(equalTo: status.trailingAnchor),
+            syncLabel.centerYAnchor.constraint(equalTo: status.centerYAnchor),
             progress.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16), progress.centerYAnchor.constraint(equalTo: status.centerYAnchor),
             progress.widthAnchor.constraint(equalToConstant: 16), progress.heightAnchor.constraint(equalToConstant: 16),
             empty.centerXAnchor.constraint(equalTo: scroll.centerXAnchor), empty.centerYAnchor.constraint(equalTo: scroll.centerYAnchor)
         ])
+        sshTerminal.onSessionClosed = { [weak self] in
+            guard let self else { return }
+            pendingShellDirectory = nil
+            let wasVisible = showingTerminal
+            showingTerminal = false
+            updateControls()
+            if wasVisible { self.window?.makeFirstResponder(table) }
+        }
+        sshTerminal.onDirectoryChange = { [weak self] path, settings in
+            guard let self, UserDefaults.standard.bool(forKey: "syncFolders.v1"), connected, activeSettings == settings else { return }
+            pendingShellDirectory = (path, settings)
+            applyPendingShellDirectory()
+        }
+        sshTerminal.onSyncStatus = { [weak self] message in
+            self?.syncLabel.stringValue = message ?? ""
+            self?.updateControls()
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(syncPreferenceChanged), name: .retrieverSyncPreferenceChanged, object: nil)
         updateControls()
     }
     required init?(coder: NSCoder) { fatalError("Programmatic window") }
 
+    @objc private func syncPreferenceChanged() {
+        pendingShellDirectory = nil
+        sshTerminal.setSyncEnabled(UserDefaults.standard.bool(forKey: "syncFolders.v1"))
+    }
     private static let actions: [(String, String, String, Selector)] = [
         ("connect", "Open Connection", "plus.circle", #selector(openConnection(_:))),
         ("reconnect", "Reconnect", "arrow.triangle.2.circlepath", #selector(reconnect(_:))),
@@ -260,10 +321,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         item.autovalidates = false
         return item
     }
+    private var selectedNodes: [FileNode] { table.selectedRowIndexes.compactMap { table.item(atRow: $0) as? FileNode } }
     private var selectedNode: FileNode? { table.item(atRow: table.selectedRow) as? FileNode }
     private var selected: RemoteEntry? { selectedNode?.entry }
     private func enabled(_ action: Selector?) -> Bool {
         if action == #selector(cancel(_:)) { return busy }
+        if action == #selector(endTerminal(_:)) { return sshTerminal.terminal != nil }
         if action == #selector(showDownloads(_:)) { return true }
         if showingTerminal && action != #selector(openConnection(_:)) && action != #selector(disconnect(_:)) { return false }
         if busy { return false }
@@ -273,9 +336,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         case #selector(openConnection(_:)): return true
         case #selector(goUp(_:)): return directory != nil && directory?.path != Data("/".utf8)
         case #selector(refresh(_:)), #selector(disconnect(_:)), #selector(uploadSelected(_:)): return directory != nil
-        case #selector(downloadSelected(_:)), #selector(previewSelected(_:)): return selected.map { !$0.attributes.isDirectory && !$0.attributes.isSymbolicLink } ?? false
-        case #selector(sshIntoFolder(_:)): return selected.map { !$0.attributes.isSymbolicLink && ($0.attributes.isDirectory || $0.attributes.permissions.map { $0 & 0xF000 == 0x8000 } == true) } ?? false
-        case #selector(openSelected(_:)): return selected != nil
+        case #selector(downloadSelected(_:)): return !selectedNodes.isEmpty && selectedNodes.contains { !$0.entry.attributes.isSymbolicLink }
+        case #selector(previewSelected(_:)): return selectedNodes.count == 1 && (selected.map { !$0.attributes.isDirectory && !$0.attributes.isSymbolicLink } ?? false)
+        case #selector(sshIntoFolder(_:)): return selectedNodes.count == 1 && (selected.map { !$0.attributes.isSymbolicLink && ($0.attributes.isDirectory || $0.attributes.permissions.map { $0 & 0xF000 == 0x8000 } == true) } ?? false)
+        case #selector(openSelected(_:)): return selectedNodes.count == 1
         default: return false
         }
     }
@@ -289,7 +353,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         pathField.stringValue = directory.map { String(decoding: $0.path, as: UTF8.self) } ?? ""
         sshTerminal.view.isHidden = !showingTerminal
         paneSwitch.isHidden = sshTerminal.terminal == nil
-        endSession.isHidden = sshTerminal.terminal == nil
+        closeTerminal.isHidden = sshTerminal.terminal == nil || sshTerminal.active
+        syncLabel.isHidden = !showingTerminal || syncLabel.stringValue.isEmpty || busy
+        status.isHidden = !syncLabel.isHidden
         paneSwitch.selectedSegment = showingTerminal ? 1 : 0
         if showingTerminal { pathField.stringValue = sshTerminal.sessionTitle }
         if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
@@ -376,30 +442,37 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
                 }
             }
             connected = await browser.isConnected
+            sshTerminal.setBrowserConnection(connected ? activeSettings : nil)
             if !connected, directory != nil {
                 window?.title = "\(activeSettings?.host ?? "Server") — Disconnected — Retriever"
             }
             preparingPreview = false
             busy = false
+            activePromiseGroup = nil
             cancellation = nil
             updateControls()
             let completion = afterCleanup
             afterCleanup = nil
             completion?()
+            if completion == nil {
+                startPendingPromises()
+                applyPendingShellDirectory()
+            }
         }
     }
     private func show(_ result: RemoteDirectory) {
-        let selectedPath = selectedNode?.path
+        let selectedPaths = Set(selectedNodes.map(\.path))
         let sameFolder = directory?.path == result.path
         directory = result
         roots = result.entries.map { FileNode($0, parent: result.path) }
         if let activeSettings { history.updateLocation(result.path, for: activeSettings) }
         table.deselectAll(nil)
         table.reloadData()
-        if sameFolder, let selectedPath {
-            for row in 0..<table.numberOfRows where (table.item(atRow: row) as? FileNode)?.path == selectedPath {
-                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            }
+        if sameFolder {
+            let rows = IndexSet((0..<table.numberOfRows).filter { row in
+                (table.item(atRow: row) as? FileNode).map { selectedPaths.contains($0.path) } ?? false
+            })
+            table.selectRowIndexes(rows, byExtendingSelection: false)
         }
         if window?.isKeyWindow == true, window?.attachedSheet == nil, window?.firstResponder === window || window?.firstResponder == nil { window?.makeFirstResponder(showingTerminal ? sshTerminal.terminal : table) }
         status.stringValue = "\(result.entries.count) items"
@@ -408,10 +481,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private func connect(_ settings: ConnectionSettings, startingAt path: Data?) {
         let expanded = settings == activeSettings && path == directory?.path ? expandedPaths : []
         let selection = selectedNode?.path
+        pendingShellDirectory = nil
+        connectionGeneration = UUID()
+        sshTerminal.setBrowserConnection(nil)
         runOperation("Connecting to \(settings.host)…") { [self] signal in
             let result = try await browser.connect(settings, startingAt: path, cancellation: signal)
             connected = true
             activeSettings = settings
+            sshTerminal.setBrowserConnection(settings)
             history.remember(settings, path: result.path)
             show(result)
             window?.title = "\(settings.host) — Retriever"
@@ -444,13 +521,23 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
     }
-    private func navigate(_ path: Data) {
+    private func navigate(_ path: Data, fromTerminal: Bool = false) {
         let expanded = path == directory?.path ? expandedPaths : []
         let selection = selectedNode?.path
         runOperation("Loading folder…") { [self] signal in
             show(try await browser.directory(path, cancellation: signal))
             try await restoreExpanded(expanded, selection: selection, signal: signal)
+            if !fromTerminal, let actual = directory?.path, let settings = activeSettings {
+                pendingShellDirectory = nil
+                sshTerminal.synchronizeDirectory(actual, settings: settings)
+            }
         }
+    }
+    private func applyPendingShellDirectory() {
+        guard !busy, window?.attachedSheet == nil, let (path, settings) = pendingShellDirectory else { return }
+        pendingShellDirectory = nil
+        guard connected, activeSettings == settings, UserDefaults.standard.bool(forKey: "syncFolders.v1"), path != directory?.path else { return }
+        navigate(path, fromTerminal: true)
     }
     @objc func refresh(_ sender: Any?) { if enabled(#selector(refresh(_:))), let directory { navigate(directory.path) } }
     @objc func goUp(_ sender: Any?) {
@@ -464,7 +551,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     @objc func sshIntoFolder(_ sender: Any?) {
         guard window?.attachedSheet == nil, enabled(#selector(sshIntoFolder(_:))), let node = selectedNode, let settings = activeSettings else { return }
         do {
-            let request = try SSHLaunchRequest(settings: settings, path: node.path, isDirectory: node.entry.attributes.isDirectory)
+            let request = try SSHLaunchRequest(settings: settings, path: node.path, isDirectory: node.entry.attributes.isDirectory, syncEnabled: UserDefaults.standard.bool(forKey: "syncFolders.v1"))
             if sshTerminal.open(request) { showTerminalPane(true) }
         } catch {
             if let window { NSAlert(error: error).beginSheetModal(for: window) { _ in } }
@@ -478,8 +565,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     @objc private func switchPane(_ sender: NSSegmentedControl) {
         showTerminalPane(sender.selectedSegment == 1)
     }
-    @objc private func endTerminal(_ sender: Any?) {
+    @objc func endTerminal(_ sender: Any?) {
         guard sshTerminal.confirmEndingSession() else { return }
+        pendingShellDirectory = nil
         sshTerminal.closeSession()
         showTerminalPane(false)
     }
@@ -489,91 +577,254 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     @objc func uploadSelected(_ sender: Any?) {
         guard window?.attachedSheet == nil, enabled(#selector(uploadSelected(_:))), let directory, let window else { return }
         let panel = NSOpenPanel()
-        panel.title = "Upload File"
+        panel.title = "Upload Files and Folders"
         panel.prompt = "Upload"
         panel.message = "Upload to \(String(decoding: directory.path, as: UTF8.self))"
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
         panel.resolvesAliases = false
         panel.beginSheetModal(for: window) { [weak self] response in
-            guard response == .OK, let source = panel.url else { return }
-            self?.uploadFile(source, to: directory.path)
+            guard let self else { return }
+            defer { applyPendingShellDirectory() }
+            guard response == .OK else { return }
+            uploadFiles(panel.urls, to: directory.path)
         }
     }
-    // The native picker and integration checks share the same upload operation.
-    func uploadFile(_ source: URL) {
-        guard window?.attachedSheet == nil, let directory else { return }
-        uploadFile(source, to: directory.path)
-    }
-    private func uploadFile(_ source: URL, to folder: Data, policy: UploadDestinationPolicy = .exclusive) {
-        guard enabled(#selector(uploadSelected(_:))) else { return }
-        let path = SFTPSession.appending(Data(source.lastPathComponent.utf8), to: folder)
-        let expanded = expandedPaths
-        runOperation("Uploading \(source.lastPathComponent)…") { [self] signal in
-            do {
-                try await browser.upload(source, to: path, policy: policy, cancellation: signal) { [weak self] bytes in
-                    Task { @MainActor [weak self] in
-                        guard let self, busy, cancellation === signal else { return }
-                        let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
-                        status.stringValue = "Uploading \(source.lastPathComponent) — \(count) sent"
-                    }
-                }
-            } catch SFTPError.uploadDestinationExists {
-                guard let window, afterCleanup == nil else { return }
-                status.stringValue = "Upload needs replacement approval."
-                let alert = NSAlert()
-                alert.messageText = "Replace “\(source.lastPathComponent)”?"
-                alert.informativeText = "A file with this name already exists in \(String(decoding: folder, as: UTF8.self)). Replace it with the selected local file?"
-                alert.addButton(withTitle: "Cancel")
-                alert.addButton(withTitle: "Replace")
-                alert.beginSheetModal(for: window) { [weak self] response in
-                    if response == .alertSecondButtonReturn { self?.uploadFile(source, to: folder, policy: .replaceApproved) }
-                    else { self?.status.stringValue = "Upload cancelled." }
-                }
-                return
-            }
-            // Publication already succeeded: a refresh failure must not imply failure of the upload.
-            do {
-                show(try await browser.directory(folder, cancellation: signal))
-                try await restoreExpanded(expanded, selection: path, signal: signal)
-                window?.makeFirstResponder(showingTerminal ? sshTerminal.terminal : table)
-                status.stringValue = "Uploaded \(source.lastPathComponent)"
-            } catch {
-                status.stringValue = "Uploaded \(source.lastPathComponent); folder refresh did not finish."
-                if let window { NSAlert(error: error).beginSheetModal(for: window) { _ in } }
-            }
+    // Pickers, drag-and-drop and integration checks share one transfer path.
+    func uploadFile(_ source: URL) { uploadFiles([source]) }
+    func uploadFiles(_ sources: [URL], to folder: Data? = nil) {
+        guard !busy, connected, !sources.isEmpty, let destination = folder ?? directory?.path else { return }
+        let items = sources.map { source in
+            TransferItem(remotePath: SFTPSession.appending(Data(source.lastPathComponent.utf8), to: destination), localURL: source,
+                         isDirectory: (try? source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])).map { $0.isDirectory == true && $0.isSymbolicLink != true } ?? false)
         }
+        startTransfer(items, direction: .upload)
     }
     @objc func downloadSelected(_ sender: Any?) {
-        guard window?.attachedSheet == nil, enabled(#selector(downloadSelected(_:))), let node = selectedNode, let window else { return }
-        let panel = NSSavePanel()
-        panel.title = "Download File"
-        panel.prompt = "Download"
-        panel.nameFieldStringValue = node.entry.name
-        panel.canCreateDirectories = true
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard response == .OK, let destination = panel.url, let self else { return }
-            let policy: DownloadDestinationPolicy = FileManager.default.fileExists(atPath: destination.path) ? .replaceApproved : .exclusive
-            self.retrieve(node, to: destination, policy: policy)
+        guard window?.attachedSheet == nil, enabled(#selector(downloadSelected(_:))), let window else { return }
+        let nodes = selectedNodes
+        if nodes.count == 1, let node = nodes.first, !node.entry.attributes.isDirectory {
+            let panel = NSSavePanel()
+            panel.title = "Download File"
+            panel.prompt = "Download"
+            panel.nameFieldStringValue = node.entry.name
+            panel.canCreateDirectories = true
+            panel.beginSheetModal(for: window) { [weak self] response in
+                guard let self else { return }
+                defer { applyPendingShellDirectory() }
+                guard response == .OK, let destination = panel.url else { return }
+                let approved = FileManager.default.fileExists(atPath: destination.path)
+                startTransfer([transferItem(node, to: destination)], direction: .download, approvedDestination: approved ? destination : nil)
+            }
+        } else {
+            let panel = NSOpenPanel()
+            panel.title = "Download Files and Folders"
+            panel.prompt = "Download Here"
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.canCreateDirectories = true
+            panel.beginSheetModal(for: window) { [weak self] response in
+                guard let self else { return }
+                defer { applyPendingShellDirectory() }
+                guard response == .OK, let destination = panel.url else { return }
+                startTransfer(nodes.map { transferItem($0, to: destination.appendingPathComponent($0.entry.name), automaticName: true) }, direction: .download)
+            }
         }
+    }
+    private func transferItem(_ node: FileNode, to destination: URL, automaticName: Bool = false) -> TransferItem {
+        let invalidName = automaticName && String(data: node.entry.nameBytes, encoding: .utf8) == nil
+        return TransferItem(remotePath: node.path, localURL: destination, isDirectory: node.entry.attributes.isDirectory,
+                            validationError: invalidName ? .invalidName : nil)
     }
     func retrieveSelection(to destination: URL, policy: DownloadDestinationPolicy = .exclusive) {
         guard enabled(#selector(downloadSelected(_:))), let node = selectedNode else { return }
-        retrieve(node, to: destination, policy: policy)
+        startTransfer([transferItem(node, to: destination)], direction: .download, approvedDestination: policy == .replaceApproved ? destination : nil)
     }
-    private func retrieve(_ node: FileNode, to destination: URL, policy: DownloadDestinationPolicy) {
-        guard !busy, connected, let settings = activeSettings else { return }
-        let selected = node.entry
-        runOperation("Downloading \(selected.name)…") { [self] signal in
-            let bytes = try await browser.download(node.path, to: destination, policy: policy, cancellation: signal) { [weak self] bytes in
-                Task { @MainActor [weak self] in
-                    guard let self, busy, cancellation === signal else { return }
-                    let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
-                    status.stringValue = "Downloading \(selected.name) — \(count) received"
+    func retrieveSelections(to folder: URL) {
+        guard enabled(#selector(downloadSelected(_:))) else { return }
+        startTransfer(selectedNodes.map { transferItem($0, to: folder.appendingPathComponent($0.entry.name), automaticName: true) }, direction: .download)
+    }
+    private func decideConflict(_ conflict: TransferConflict, approvedDestination: URL? = nil) async -> TransferDecision {
+        if conflict.kind == .file {
+            if conflict.item.localURL == approvedDestination { return .replace }
+            if let applyFileConflict { return applyFileConflict }
+        }
+        guard let window, afterCleanup == nil else { return .cancel }
+        do { try cancellation?.check() } catch { return .cancel }
+        let folder = conflict.kind == .folder
+        let name = conflict.item.localURL.lastPathComponent
+        let alert = NSAlert()
+        alert.messageText = folder ? "Merge “\(name)”?" : "Replace “\(name)”?"
+        alert.informativeText = folder
+            ? "This destination folder already exists. Merge adds its contents and preserves unrelated files. Conflicting files need separate replacement approval."
+            : "A file with this name already exists at the destination. Replace it, skip this file, or cancel the remaining transfers."
+        alert.addButton(withTitle: "Cancel Remaining")
+        alert.addButton(withTitle: folder ? "Merge" : "Replace")
+        alert.addButton(withTitle: folder ? "Skip Folder" : "Skip")
+        alert.showsSuppressionButton = !folder
+        alert.suppressionButton?.title = "Apply to remaining file conflicts"
+        conflictAlert = alert
+        let result: NSApplication.ModalResponse = await withCheckedContinuation { continuation in
+            alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+        }
+        conflictAlert = nil
+        let decision: TransferDecision = result == .alertSecondButtonReturn ? (folder ? .merge : .replace) : result == .alertThirdButtonReturn ? .skip : .cancel
+        if !folder, alert.suppressionButton?.state == .on, decision != .cancel {
+            applyFileConflict = decision
+            activePromiseGroup?.fileConflict = decision
+        }
+        return decision
+    }
+    private func performTransfer(_ items: [TransferItem], direction: TransferDirection, settings: ConnectionSettings, signal: SFTPCancellation, approvedDestination: URL? = nil) async -> TransferSummary {
+        let action = direction == .upload ? "Uploading" : "Downloading"
+        return await TransferCoordinator(browser: browser).run(items, direction: direction, cancellation: signal,
+            conflict: { [weak self] in await self?.decideConflict($0, approvedDestination: approvedDestination) ?? .cancel },
+            progress: { [weak self] value in
+                guard let self, cancellation === signal else { return }
+                let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: value.bytes), countStyle: .file)
+                status.stringValue = "\(action) file \(value.completedFiles + 1) — \(value.item.localURL.lastPathComponent) — \(count)"
+            }, didDownload: { [weak self] item, bytes in
+                self?.downloads.record(filename: item.localURL.lastPathComponent, settings: settings, remotePath: item.remotePath, destination: item.localURL, byteCount: bytes)
+            })
+    }
+    private func startTransfer(_ items: [TransferItem], direction: TransferDirection, approvedDestination: URL? = nil) {
+        guard !busy, connected, !items.isEmpty, let settings = activeSettings else { return }
+        applyFileConflict = nil
+        let visibleFolder = directory?.path
+        let expanded = expandedPaths
+        runOperation(direction == .upload ? "Preparing upload…" : "Preparing download…") { [self] signal in
+            let summary = await performTransfer(items, direction: direction, settings: settings, signal: signal, approvedDestination: approvedDestination)
+            if direction == .upload, !summary.cancelled, !summary.connectionLost, afterCleanup == nil, await browser.isConnected, let visibleFolder {
+                // Refresh errors must not turn successful publications into failures.
+                if let result = try? await browser.directory(visibleFolder, cancellation: signal) {
+                    show(result)
+                    try? await restoreExpanded(expanded, selection: items.last?.remotePath, signal: signal)
                 }
             }
-            downloads.record(filename: selected.name, settings: settings, remotePath: node.path, destination: destination, byteCount: bytes)
-            status.stringValue = "Downloaded to \(destination.path)"
+            showTransferSummary(summary, direction: direction, items: items)
+            if window?.attachedSheet == nil { window?.makeFirstResponder(showingTerminal ? sshTerminal.terminal : table) }
+        }
+    }
+    private func showTransferSummary(_ summary: TransferSummary, direction: TransferDirection, items: [TransferItem]) {
+        let completed = direction == .upload ? "Uploaded" : "Downloaded"
+        if !summary.cancelled, summary.failures.isEmpty, summary.skippedItems == 0, items.count == 1, items.first?.isDirectory == false {
+            status.stringValue = "\(completed) \(items[0].localURL.lastPathComponent)"
+        } else {
+            status.stringValue = "\(completed) \(summary.completedFiles) files; \(summary.skippedItems) skipped; \(summary.failures.count) failed." + (summary.cancelled ? " Remaining transfers cancelled." : "")
+        }
+        guard !summary.failures.isEmpty || summary.skippedItems > 0 || summary.cancelled else { return }
+        guard let window, afterCleanup == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = summary.cancelled ? "Transfer cancelled" : "Transfer results"
+        var details = [status.stringValue, "Completed files and created folders remain at the destination."]
+        details += summary.failures.prefix(10).map { "\($0.item.localURL.lastPathComponent): \($0.error.localizedDescription)" }
+        if summary.connectionLost { details.append("The connection was lost. Reconnect before starting another transfer.") }
+        alert.informativeText = details.joined(separator: "\n")
+        alert.beginSheetModal(for: window) { [weak self] _ in
+            self?.updateControls()
+            self?.applyPendingShellDirectory()
+        }
+    }
+    // Native file promises defer remote downloads until Finder accepts the drop.
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+        guard !busy, connected, !showingTerminal, let settings = activeSettings, let node = item as? FileNode,
+              !node.entry.attributes.isSymbolicLink, let name = String(data: node.entry.nameBytes, encoding: .utf8),
+              !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0") else { return nil }
+        // A folder promise already includes selected descendants.
+        if selectedNodes.contains(where: { parent in
+            parent !== node && parent.entry.attributes.isDirectory && node.path.starts(with: parent.path + Data("/".utf8))
+        }) { return nil }
+        let group: PromiseGroup
+        if let preparedPromiseGroup { group = preparedPromiseGroup }
+        else {
+            group = PromiseGroup(generation: connectionGeneration, settings: settings)
+            preparedPromiseGroup = group
+        }
+        group.expectedPaths.insert(node.path)
+        let remotePath = node.path
+        let isDirectory = node.entry.attributes.isDirectory
+        return RemoteFilePromise(filename: name, directory: isDirectory) { [weak self, group] url, completion in
+            guard let self else { completion(SFTPError.disconnected); return }
+            enqueuePromise(TransferItem(remotePath: remotePath, localURL: url, isDirectory: isDirectory), group: group, completion: completion)
+        }
+    }
+    func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        finishFileDrag(operation: operation)
+    }
+    func finishFileDrag(operation: NSDragOperation) {
+        if operation.isEmpty { preparedPromiseGroup?.cancelled = true }
+        preparedPromiseGroup = nil
+    }
+    private func localDropURLs(_ info: NSDraggingInfo) -> [URL] {
+        (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+    private func dropFolder(_ item: Any?) -> Data? {
+        if let node = item as? FileNode, node.entry.attributes.isDirectory, !node.entry.attributes.isSymbolicLink { return node.path }
+        return directory?.path
+    }
+    func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
+        guard !busy, connected, !showingTerminal, window?.attachedSheet == nil,
+              info.draggingSource as? NSOutlineView !== table, !localDropURLs(info).isEmpty, dropFolder(item) != nil else { return [] }
+        let target = (item as? FileNode).flatMap { $0.entry.attributes.isDirectory && !$0.entry.attributes.isSymbolicLink ? $0 : nil }
+        outlineView.setDropItem(target, dropChildIndex: NSOutlineViewDropOnItemIndex)
+        return .copy
+    }
+    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        guard !busy, connected, !showingTerminal, window?.attachedSheet == nil, info.draggingSource as? NSOutlineView !== table,
+              let folder = dropFolder(item) else { return false }
+        let urls = localDropURLs(info)
+        guard !urls.isEmpty else { return false }
+        uploadFiles(urls, to: folder)
+        return true
+    }
+    private func enqueuePromise(_ item: TransferItem, group: PromiseGroup, completion: @escaping @Sendable (Error?) -> Void) {
+        guard !group.cancelled else { completion(CancellationError()); return }
+        guard group.generation == connectionGeneration, group.settings == activeSettings, connected, window?.isVisible == true else {
+            completion(SFTPError.disconnected); return
+        }
+        guard window?.attachedSheet == nil || activePromiseGroup === group else { completion(CancellationError()); return }
+        guard !busy || activePromiseGroup === group else { completion(CancellationError()); return }
+        if activePromiseGroup !== group { applyFileConflict = group.fileConflict }
+        activePromiseGroup = group
+        pendingPromises.append(PendingPromise(item: item, group: group, completion: completion))
+        startPendingPromises()
+    }
+    private func startPendingPromises() {
+        guard !busy, window?.attachedSheet == nil, !pendingPromises.isEmpty else { return }
+        activePromiseGroup = pendingPromises.first?.group
+        applyFileConflict = activePromiseGroup?.fileConflict
+        runOperation("Preparing dropped downloads…") { [self] signal in
+            while !pendingPromises.isEmpty {
+                let promise = pendingPromises.removeFirst()
+                let group = promise.group
+                group.items.append(promise.item)
+                group.completedPaths.insert(promise.item.remotePath)
+                guard !group.cancelled else { promise.completion(CancellationError()); continue }
+                guard group.generation == connectionGeneration, group.settings == activeSettings, await browser.isConnected else {
+                    group.cancelled = true
+                    group.summary.connectionLost = true
+                    group.summary.failures.append(TransferFailure(item: promise.item, error: SFTPError.disconnected))
+                    promise.completion(SFTPError.disconnected); continue
+                }
+                let summary = await performTransfer([promise.item], direction: .download, settings: group.settings, signal: signal)
+                group.summary.completedFiles += summary.completedFiles
+                group.summary.skippedItems += summary.skippedItems
+                group.summary.failures += summary.failures
+                group.summary.cancelled = group.summary.cancelled || summary.cancelled
+                group.summary.connectionLost = group.summary.connectionLost || summary.connectionLost
+                let outcome = summary.outcomes.first
+                if summary.cancelled || summary.connectionLost { group.cancelled = true }
+                promise.completion(outcome?.succeeded == true ? nil : outcome?.error ?? CancellationError())
+                status.stringValue = "Downloaded \(group.summary.completedFiles) files; \(group.summary.failures.count) failed."
+            }
+            if let group = activePromiseGroup, !group.resultsShown,
+               group.cancelled || group.completedPaths.isSuperset(of: group.expectedPaths) {
+                group.resultsShown = true
+                showTransferSummary(group.summary, direction: .download, items: group.items)
+            }
+            // Keep ownership until runOperation clears busy: Finder may request
+            // another promised file while the operation finishes on the actor.
         }
     }
     @objc func previewSelected(_ sender: Any?) {
@@ -663,11 +914,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         connect(activeSettings, startingAt: directory?.path)
     }
     @objc func cancel(_ sender: Any?) {
+        activePromiseGroup?.cancelled = true
+        if let sheet = conflictAlert?.window, let window { window.endSheet(sheet, returnCode: .alertFirstButtonReturn) }
         cancellation?.cancel()
         if busy { status.stringValue = "Cancelling…" }
     }
     @objc func disconnect(_ sender: Any?) {
         guard !busy else { return }
+        pendingShellDirectory = nil
+        connectionGeneration = UUID()
+        sshTerminal.setBrowserConnection(nil)
         runOperation("Disconnecting…") { [self] _ in
             await browser.disconnect()
             connected = false
@@ -721,6 +977,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             guard let self else { return }
             connectionSheet = nil
             if let settings { connect(settings, startingAt: path) }
+            else { applyPendingShellDirectory() }
         }
     }
 }

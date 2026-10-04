@@ -12,7 +12,9 @@ Connect, browse, preview, download, and upload. Retriever uses macOS controls an
 
 ## SSH terminal
 
-Choose **SSH into Folder** from the file context menu. A folder opens at that path; a file opens at its parent. The dark terminal fills the file browser area. Use Files / Terminal to switch views without ending SSH; End Session closes it. SSH stays independent of SFTP. Replacing a session or closing the browser with SSH active requires confirmation.
+Choose **SSH into Folder** from the file context menu. A folder opens at that path; a file opens at its parent. The dark terminal fills the file browser area. Use Files / Terminal to switch views without ending SSH. Exiting the shell returns to Files; File → End SSH Session remains available for a stuck session. Failed connections keep their diagnostic output until you close the pane. SSH stays independent of SFTP. Replacing a session or closing the browser with SSH active requires confirmation.
+
+Turn on **Keep Files and Terminal folders in sync** in Settings to follow folder changes in both views. This applies to new Bash and Zsh sessions and waits while you type or run a command. Sync is off by default.
 
 Retriever pins SwiftTerm 1.20.0. Building requires Apple’s Metal toolchain and approval of SwiftTerm’s build-info plugin in Xcode. On a fresh Mac, open `Retriever.xcodeproj`, build once, and approve `SwiftTermBuildInfoPlugin` when prompted. Xcode remembers approval for that package revision, so subsequent Make builds work without extra flags. `make check-terminal` runs its SSH integration checks; `python3 scripts/manual_browser_check.py --shell` opens a disposable server for manual checks. Dependency notices are in [ThirdPartyNotices.txt](ThirdPartyNotices.txt).
 
@@ -25,14 +27,14 @@ Requires an **Apple silicon Mac with macOS 14 or later**.
 - **Return to your servers.** Successful connections remember the host, account, port, and last visited folder.
 - **Browse folders in place.** Expand the file tree, navigate with arrow keys, or double-click a folder to open it.
 - **Preview before saving.** Press Space or choose Preview from a file’s context menu. Escape closes the preview or cancels its download. Files larger than 1 MB require confirmation.
-- **Download where you choose.** Use the native Save dialog, approve replacement of an existing file, and cancel active transfers.
-- **Upload to the current folder.** Choose Upload (⌘U), select one local file, and approve any replacement. Cancel stops an active transfer.
+- **Download where you choose.** Select files or folders with Command/Shift, then Download or drag them into Finder. Transfers run sequentially; folders include their contents and empty subfolders.
+- **Upload files and folders.** Choose Upload (⌘U), or drag local items into Retriever. Drop onto a folder to upload there; elsewhere uploads to the displayed folder. Approve folder merges and file replacements separately. Cancel leaves completed files intact.
 - **Find previous downloads.** Open Downloads with ⇧⌘J and use Show in Finder. Clearing history leaves your files on disk.
 - **Recover without losing your place.** File errors preserve usable connections. If a connection closes, the listing stays visible and Reconnect lets you resume.
 
 Connect with SSH keys, an SSH agent, or a password. Retriever asks you to verify a new server’s fingerprint and rejects changed host keys. Passwords are never saved; accepted server keys stay in OpenSSH’s `known_hosts` file.
 
-This branch supports SFTP and individual file uploads and downloads. Uploads are not yet in the published 0.3.0 release. FTP, folder transfers, and symbolic-link transfers are not available.
+Retriever supports SFTP. FTP and symbolic-link transfers are not available. Recoverable transfer errors do not stop the remaining items; connection loss stops the batch. A final summary reports skipped or failed items.
 
 ## Build and run
 
@@ -92,6 +94,8 @@ make test            # Core XCTest suite
 make check-ssh       # Real SSH transport and authentication checks
 make check-windows   # Native window behavior and lifecycle
 make check-browser   # Connection, browsing, previews, downloads, and uploads
+make check-transfers # Batch traversal, conflicts, cancellation, and failures
+make check-terminal  # SSH lifecycle and folder sync
 ```
 
 The integration checks need Python 3. Window and browser checks also need a logged-in macOS GUI session. SSH fixtures use temporary keys on a loopback server; no personal server credentials are needed.
