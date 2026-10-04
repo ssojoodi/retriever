@@ -330,6 +330,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         if action == #selector(showDownloads(_:)) { return true }
         if showingTerminal && action != #selector(openConnection(_:)) && action != #selector(disconnect(_:)) { return false }
         if busy { return false }
+        if action == #selector(disconnect(_:)) { return connected || sshTerminal.terminal != nil }
         if action == #selector(reconnect(_:)) { return !connected && activeSettings != nil }
         if action != #selector(openConnection(_:)) && !connected { return false }
         switch action {
@@ -920,11 +921,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         if busy { status.stringValue = "Cancelling…" }
     }
     @objc func disconnect(_ sender: Any?) {
+        guard !busy, window?.attachedSheet == nil else { return }
+        guard sshTerminal.confirmEndingSession("Disconnect Files and end the SSH session?") else { return }
+        // Confirmation can run the event loop; do not interrupt work started there.
         guard !busy else { return }
         pendingShellDirectory = nil
         connectionGeneration = UUID()
         sshTerminal.setBrowserConnection(nil)
         runOperation("Disconnecting…") { [self] _ in
+            sshTerminal.closeSession()
+            showingTerminal = false
             await browser.disconnect()
             connected = false
             activeSettings = nil
@@ -933,6 +939,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             table.reloadData()
             window?.title = "Retriever"
             status.stringValue = "Not connected"
+            window?.makeFirstResponder(table)
         }
     }
     /// Returns true when immediate closing is safe; otherwise resolves the user's

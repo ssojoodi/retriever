@@ -1,5 +1,5 @@
 import AppKit
-import RetrieverCore
+@testable import RetrieverCore
 import SwiftTerm
 
 @main
@@ -17,7 +17,10 @@ struct TerminalChecks {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let request = try SSHLaunchRequest(settings: settings, path: Data(folder.path.utf8), isDirectory: true)
         let controller = SSHTerminalViewController(sshOptions: options)
-        let browser = MainWindowController(sshTerminal: controller)
+        let transport = SFTPBrowser(initialPath: Data(root.appendingPathComponent("files").path.utf8)) { settings, signal in
+            try SFTPSession(executable: URL(fileURLWithPath: "/usr/bin/ssh"), arguments: options + SFTPSession.sshArguments(settings), cancellation: signal)
+        }
+        let browser = MainWindowController(browser: transport, sshTerminal: controller)
         let host = browser.window!
         browser.showWindow(nil)
         host.makeKeyAndOrderFront(nil)
@@ -105,6 +108,35 @@ struct TerminalChecks {
         pump()
         precondition(controller.terminal != nil && !controller.view.isHidden, "Exit255 retains diagnostic pane")
         controller.closeSession()
+
+        // Disconnect treats Files and SSH as one user-visible connection.
+        var filesConnected = false
+        Task {
+            _ = try await transport.connect(settings, cancellation: SFTPCancellation())
+            filesConnected = await transport.isConnected
+        }
+        wait("SFTP connection for combined disconnect") { filesConnected }
+        controller.open(request)
+        browser.showTerminalPane(true)
+        let disconnectPID = controller.terminal!.process.shellPid
+        let disconnectItem = NSMenuItem(title: "Disconnect", action: #selector(MainWindowController.disconnect(_:)), keyEquivalent: "")
+        precondition(browser.validateMenuItem(disconnectItem), "SSH-only UI must offer Disconnect")
+        let keepBoth = choose("Keep Session")
+        browser.disconnect(nil)
+        keepBoth.invalidate()
+        precondition(controller.active && !browser.busy)
+        filesConnected = false
+        Task { filesConnected = await transport.isConnected }
+        wait("Declined disconnect preserves SFTP") { filesConnected }
+        let disconnectBoth = choose("End Session")
+        browser.disconnect(nil)
+        disconnectBoth.invalidate()
+        wait("Disconnect closes both panes") { !browser.busy && controller.terminal == nil }
+        var verifiedDisconnected = false
+        Task { verifiedDisconnected = !(await transport.isConnected) }
+        wait("Disconnect closes SFTP") { verifiedDisconnected }
+        precondition(controller.view.isHidden && !browser.validateMenuItem(disconnectItem))
+        precondition(kill(disconnectPID, 0) == -1 && errno == ESRCH, "Disconnect must reap SSH")
 
         // Real shell hooks, both sync directions, and conservative input gating.
         let integrated = try SSHLaunchRequest(settings: settings, path: Data(folder.path.utf8), isDirectory: true, syncEnabled: true)

@@ -12,7 +12,7 @@ Connect, browse, preview, download, and upload. Retriever uses macOS controls an
 
 ## SSH terminal
 
-Choose **SSH into Folder** from the file context menu. A folder opens at that path; a file opens at its parent. The dark terminal fills the file browser area. Use Files / Terminal to switch views without ending SSH. Exiting the shell returns to Files; File → End SSH Session remains available for a stuck session. Failed connections keep their diagnostic output until you close the pane. SSH stays independent of SFTP. Replacing a session or closing the browser with SSH active requires confirmation.
+Choose **SSH into Folder** from the file context menu. A folder opens at that path; a file opens at its parent. The dark terminal fills the file browser area. Use Files / Terminal to switch views without ending SSH. Exiting the shell returns to Files; File → End SSH Session remains available for a stuck session. Failed connections keep their diagnostic output until you close the pane. SSH uses a separate connection from SFTP. Disconnect closes both. Replacing a session or closing the browser with SSH active requires confirmation.
 
 Turn on **Keep Files and Terminal folders in sync** in Settings to follow folder changes in both views. This applies to new Bash and Zsh sessions and waits while you type or run a command. Sync is off by default.
 
