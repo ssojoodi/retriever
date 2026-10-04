@@ -94,3 +94,51 @@ final class ConnectionHistoryTests: XCTestCase {
     }
 
 }
+
+final class SSHDirectoryIntegrationTests: XCTestCase {
+    func testReportsValidateTokenAndLiteralPaths() {
+        let token = "session"
+        let path = Data("/space café ' $()".utf8)
+        let message = "Retriever;session;P;1;" + path.base64EncodedString()
+        XCTAssertEqual(SSHDirectoryIntegration.decode(Array(message.utf8)[...], token: token), .prompt(serial: 1, path: path))
+        XCTAssertNil(SSHDirectoryIntegration.decode(Array(message.utf8)[...], token: "another"))
+        for invalid in [Data("relative".utf8), Data("/line\nbreak".utf8), Data([47, 255]), Data([47, 0])] {
+            let value = "Retriever;session;P;1;" + invalid.base64EncodedString()
+            XCTAssertNil(SSHDirectoryIntegration.decode(Array(value.utf8)[...], token: token))
+            XCTAssertNil(SSHDirectoryIntegration.changeDirectory(invalid))
+        }
+        XCTAssertEqual(SSHDirectoryIntegration.changeDirectory(Data("/it's".utf8)), "builtin cd -- '/it'\"'\"'s'\r")
+    }
+    func testPromptGateRejectsReplaysPartialInputAndTypeahead() {
+        var gate = SSHPromptGate()
+        XCTAssertTrue(gate.prompt(serial: 1)); XCTAssertTrue(gate.ready)
+        gate.input(Array("partial".utf8)[...]); XCTAssertFalse(gate.ready)
+        XCTAssertFalse(gate.prompt(serial: 1)); XCTAssertFalse(gate.ready)
+        gate.input([13][...]); XCTAssertTrue(gate.prompt(serial: 2)); XCTAssertTrue(gate.ready)
+        gate.input(Array("command".utf8)[...]); gate.input([13][...])
+        gate.input(Array("typed ahead".utf8)[...])
+        XCTAssertTrue(gate.prompt(serial: 3)); XCTAssertFalse(gate.ready)
+        gate.input([13][...]); XCTAssertTrue(gate.prompt(serial: 4)); XCTAssertTrue(gate.ready)
+        gate.input([13][...]); gate.input([13][...])
+        XCTAssertTrue(gate.prompt(serial: 5)); XCTAssertFalse(gate.ready)
+        gate.sentDirectoryChange(); XCTAssertFalse(gate.ready)
+        XCTAssertTrue(gate.prompt(serial: 6)); XCTAssertTrue(gate.ready)
+    }
+    func testInputBeforeInitialPromptCannotArmSync() {
+        var gate = SSHPromptGate()
+        gate.input(Array("password\r".utf8)[...])
+        XCTAssertTrue(gate.prompt(serial: 1)); XCTAssertFalse(gate.ready)
+        gate.input([13][...]); XCTAssertTrue(gate.prompt(serial: 2)); XCTAssertTrue(gate.ready)
+    }
+    func testIntegrationIsOptInAndStartupFailuresUse255() throws {
+        let settings = try ConnectionSettings(host: "example.test", username: "user", port: "22")
+        let plain = try SSHLaunchRequest(settings: settings, path: Data("/tmp".utf8), isDirectory: true)
+        XCTAssertNil(plain.syncToken)
+        XCTAssertTrue(plain.arguments.last!.contains("exit 255"))
+        XCTAssertFalse(plain.arguments.last!.contains("mktemp"))
+        let integrated = try SSHLaunchRequest(settings: settings, path: Data("/tmp".utf8), isDirectory: true, syncEnabled: true)
+        XCTAssertNotNil(integrated.syncToken)
+        XCTAssertTrue(integrated.arguments.last!.contains("--rcfile"))
+        XCTAssertTrue(integrated.arguments.last!.contains("umask 077"))
+    }
+}

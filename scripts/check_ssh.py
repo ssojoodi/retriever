@@ -21,7 +21,7 @@ runner = 'ReleaseScreenshots' if screenshots else 'TerminalChecks' if terminal e
 sources = ['Tests/RetrieverSSHChecks/SSHChecks.swift']
 if gui or terminal:
     sources = ['Sources/RetrieverApp/AppDelegate.swift', 'Sources/RetrieverApp/AppMenu.swift',
-               'Sources/RetrieverApp/SSHTerminalViewController.swift', 'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/DownloadsWindowController.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
+               'Sources/RetrieverApp/SSHTerminalViewController.swift', 'Sources/RetrieverApp/SettingsWindowController.swift', 'Sources/RetrieverApp/TransferCoordinator.swift', 'Sources/RetrieverApp/RemoteFilePromise.swift', 'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/DownloadsWindowController.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
                'Tests/RetrieverAppChecks/BrowserChecks.swift']
 if terminal:
     sources[-1] = f'Tests/RetrieverAppChecks/{runner}.swift'

@@ -26,7 +26,8 @@ const fs = require('node:fs');
     await page.waitForLoadState('networkidle');
     assert.equal(await page.title(),'Release notes — Retriever for macOS');
     await page.locator('[data-download]').waitFor({state:'visible'});
-    assert.equal(await page.locator('[data-latest-release-label]').textContent(),'Published');
+    assert.equal(await page.locator('.release').first().getAttribute('id'),'v0-5-0');
+    assert.equal(await page.locator('#v0-5-0 time').getAttribute('datetime'),'2026-10-03');
     assert.equal(await page.locator('#v0-3-0').count(),1);
     assert.equal(await page.locator('#v0-3-0 time').getAttribute('datetime'),'2026-10-01');
     assert.equal(await page.locator('#v0-3-0 time').textContent(),'October 1, 2026');
@@ -88,6 +89,6 @@ const fs = require('node:fs');
     assert.equal(plainDownload.suggestedFilename(),'Retriever.dmg');
     await noScript.close();
     assert.deepEqual(errors,[]);
-    console.log('PASS: desktop/mobile layouts, screenshots, Oct 1 release date, direct downloads with old/missing/invalid metadata and JavaScript disabled, and artifact checksum.');
+    console.log('PASS: desktop/mobile layouts, screenshots, release dates, direct downloads with old/missing/invalid metadata and JavaScript disabled, and artifact checksum.');
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

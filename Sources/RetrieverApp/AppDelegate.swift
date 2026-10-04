@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var helpPanel: NSPanel?
+    private var settingsController: SettingsWindowController?
     private var controller: MainWindowController?
     private var bundledIcon: NSImage? {
         guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns") else { return nil }
@@ -20,6 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller = MainWindowController()
         controller?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+    @objc func showSettings(_ sender: Any?) {
+        if settingsController == nil { settingsController = SettingsWindowController() }
+        settingsController?.showWindow(sender)
+        settingsController?.window?.makeKeyAndOrderFront(nil)
     }
     @objc func showDownloads(_ sender: Any?) { controller?.showDownloads(sender) }
     @objc func showRetrieverHelp(_ sender: Any?) {
@@ -55,13 +61,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Compare the displayed fingerprint with one provided by the server administrator before choosing Trust and Connect. Cancel if it does not match. Accepted keys are saved in SSH known_hosts. A changed key is rejected.
 
         Browse and retrieve
-        Click a folder’s arrow to expand it inline, or double-click to open it. Use Up (⌘[) to return to the enclosing folder or Refresh (⌘R) to reload. Select a regular file and choose Download (⌘D). Right-click a file for Download or Preview, or press Space to preview the selected file. Escape closes Preview or cancels its download. Files larger than 1 MB require confirmation. Preview opens a temporary copy in Quick Look; closing it removes the copy. Choose a local filename; approve Replace in the save dialog to replace an existing file after the download completes. Folder and symbolic-link downloads are not supported yet.
+        Click a folder’s arrow to expand it inline, or double-click to open it. Use Up (⌘[) to return to the enclosing folder or Refresh (⌘R) to reload. Select files or folders with Command/Shift and choose Download (⌘D) to retrieve them sequentially. Drag selected items into Finder to download there. Right-click a file for Download or Preview, or press Space to preview the selected file. Escape closes Preview or cancels its download. Files larger than 1 MB require confirmation. Preview opens a temporary copy in Quick Look; closing it removes the copy. Choose a local filename; approve Replace in the save dialog to replace an existing file after the download completes. Folders include their contents and empty subfolders. Symbolic links are skipped.
 
         Upload
-        Choose Upload (⌘U) to send one local file to the displayed remote folder. Approve Replace to replace a remote file; this requires server support for atomic replacement. Folders and symbolic links are not supported. Uploaded files have owner-only read/write permissions. If the connection fails, an alert identifies any temporary remote file that may remain.
+        Choose Upload (⌘U) to send selected local files and folders sequentially to the displayed remote folder. You can also drag them in: drop onto a folder to upload there, or elsewhere for the displayed folder. Approve Replace to replace a remote file; this requires server support for atomic replacement. Existing folders require Merge approval; file conflicts offer Replace, Skip, or Cancel. Symbolic links are skipped. Uploaded files have owner-only read/write permissions. If the connection fails, an alert identifies any temporary remote file that may remain.
 
         Cancel and disconnect
-        Cancel (⌘.) stops the current operation and removes partial downloads. The connection stays open when the protocol can be safely reused. Disconnect ends an idle connection. Closing or quitting during work asks whether to cancel first.
+        Cancel (⌘.) stops the batch and removes the current partial file. Completed files and created folders remain. Recoverable errors allow the remaining items to continue; connection loss stops the batch. The connection stays open when the protocol can be safely reused. Disconnect closes both Files and SSH, with confirmation if a shell session is active. Closing or quitting during work asks whether to cancel first.
+
+        SSH terminal
+        Right-click a file or folder and choose SSH into Folder. Selecting a file opens its parent folder. Files / Terminal switches views without ending SSH. Exit the shell to return to Files; File → End SSH Session can stop a stuck session. Failed connections retain diagnostic output until Close Terminal.
+
+        Folder sync
+        Settings (⌘,) can keep Files and Terminal folders in sync for new Bash and Zsh sessions. Sync is off by default and waits while you type, run commands, or transfer files. Press Return at an empty prompt to resume paused sync.
 
         Download history
         Open Downloads (⇧⌘J) to see completed downloads and reveal them in Finder. Clear History removes the records, not your files. Previews are not included.

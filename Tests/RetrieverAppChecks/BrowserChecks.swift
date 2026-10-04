@@ -85,8 +85,18 @@ struct BrowserChecks {
         precondition(table.menu(for: blankEvent) == nil, "Empty space must not act on the prior selection")
         let folderMenu = contextMenu(row: 0)!
         precondition(folderMenu.items.map(\.title) == ["Download", "Preview", "", "SSH into Folder"])
-        precondition(folderMenu.items.prefix(2).allSatisfy { !$0.isEnabled }, "Folders cannot be downloaded or previewed")
+        precondition(folderMenu.items[0].isEnabled && !folderMenu.items[1].isEnabled, "Folders support download but not preview")
         precondition(folderMenu.items.last!.isEnabled, "Folders support SSH")
+        precondition(table.allowsMultipleSelection)
+        table.selectRowIndexes(IndexSet([0, 2]), byExtendingSelection: false)
+        let multiMenu = contextMenu(row: 2)!
+        precondition(table.selectedRowIndexes == IndexSet([0, 2]), "Right-click within selection must preserve all selected items")
+        precondition(multiMenu.items[0].isEnabled && !multiMenu.items[1].isEnabled && !multiMenu.items.last!.isEnabled,
+                     "Multiple items support Download, while Preview and SSH require one item")
+        try capture(window)
+        try Data(contentsOf: URL(fileURLWithPath: "artifacts/verification/authenticated-browser-content.png")).write(to: URL(fileURLWithPath: "artifacts/verification/multiple-selection.png"))
+        _ = contextMenu(row: 3)
+        precondition(table.selectedRowIndexes == IndexSet(integer: 3), "Right-click outside selection must select the pointed item")
         let fileMenu = contextMenu(row: 2)!
         precondition(table.selectedRow == 2 && fileMenu.items.filter { !$0.isSeparatorItem }.allSatisfy(\.isEnabled), "Right click must target the pointed file")
         fileMenu.performActionForItem(at: 0)
@@ -194,16 +204,23 @@ struct BrowserChecks {
         // Repeating the download must report the occupied destination, preserve
         // its bytes, and keep the session and listing usable.
         controller.retrieveSelection(to: destination)
-        waitUntil("Existing destination error") { !controller.busy && window.attachedSheet != nil }
+        waitUntil("Existing destination confirmation") { controller.busy && window.attachedSheet != nil }
+        for _ in 0..<5 { pump() }
+        let conflictShot = Process()
+        conflictShot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        conflictShot.arguments = ["-x", "-l", String(window.attachedSheet!.windowNumber), "artifacts/verification/transfer-conflict.png"]
+        try conflictShot.run()
+        conflictShot.waitUntilExit()
+        precondition(conflictShot.terminationStatus == 0, "Conflict screenshot failed")
         let preserved = try Data(contentsOf: destination)
         precondition(preserved == expected, "Failed download changed existing file")
         precondition(table.numberOfRows == 2 && window.title == "127.0.0.1 — Retriever", "Local errors must preserve listing and connection")
         let download = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "download" }!
         let open = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "connect" }!
-        let errorSheet = window.attachedSheet!
-        guard let dismiss = descendants(errorSheet.contentView!).compactMap({ $0 as? NSButton }).first(where: { $0.title == "OK" }) else { fatalError("Missing error dismissal") }
-        dismiss.performClick(nil)
-        waitUntil("Error dismissal") { window.attachedSheet == nil }
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Cancel Remaining" }!.performClick(nil)
+        waitUntil("Download cancellation summary") { !controller.busy && window.attachedSheet != nil }
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "OK" }!.performClick(nil)
+        waitUntil("Summary dismissal") { window.attachedSheet == nil }
         pump()
         precondition(download.isEnabled && open.isEnabled, "A recoverable error must permit another download")
         try Data("replace me".utf8).write(to: destination)
@@ -278,7 +295,10 @@ struct BrowserChecks {
         precondition(downloads.entries.isEmpty, "Previews must not enter cleared download history")
         controller.uploadSelected(nil)
         waitUntil("Upload picker") { window.attachedSheet is NSOpenPanel }
-        (window.attachedSheet as! NSOpenPanel).cancel(nil)
+        let uploadPicker = window.attachedSheet as! NSOpenPanel
+        precondition(uploadPicker.allowsMultipleSelection && uploadPicker.canChooseFiles && uploadPicker.canChooseDirectories,
+                     "Upload picker must accept multiple files and folders")
+        uploadPicker.cancel(nil)
         waitUntil("Upload picker cancellation") { window.attachedSheet == nil }
         precondition(!controller.busy)
         let cancelledSource = root.appendingPathComponent("cancel-upload.bin")
@@ -308,13 +328,15 @@ struct BrowserChecks {
         precondition(table.selectedRow >= 0 && window.firstResponder === table)
         try Data("replacement upload".utf8).write(to: uploadSource)
         controller.uploadFile(uploadSource)
-        waitUntil("Remote replacement confirmation") { !controller.busy && window.attachedSheet != nil }
-        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Cancel" }!.performClick(nil)
+        waitUntil("Remote replacement confirmation") { controller.busy && window.attachedSheet != nil }
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Cancel Remaining" }!.performClick(nil)
+        waitUntil("Upload cancellation summary") { !controller.busy && window.attachedSheet != nil }
+        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "OK" }!.performClick(nil)
         waitUntil("Decline remote replacement") { window.attachedSheet == nil }
         let unchangedUpload = try Data(contentsOf: uploadTarget)
         precondition(unchangedUpload == uploadBytes)
         controller.uploadFile(uploadSource)
-        waitUntil("Second replacement confirmation") { !controller.busy && window.attachedSheet != nil }
+        waitUntil("Second replacement confirmation") { controller.busy && window.attachedSheet != nil }
         descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Replace" }!.performClick(nil)
         waitUntil("Approved upload replacement") { window.attachedSheet == nil && !controller.busy && (try? Data(contentsOf: uploadTarget)) == Data("replacement upload".utf8) }
         let replacedUpload = try Data(contentsOf: uploadTarget)
@@ -328,6 +350,107 @@ struct BrowserChecks {
         uploadShot.waitUntilExit()
         precondition(uploadShot.terminationStatus == 0)
         print("PASS: native upload picker cancellation, upload, refreshed selection, replacement approval and rejection")
+        // The same batch path powers pickers and native file-promise fulfillment.
+        let uploadTree = root.appendingPathComponent("Batch folder")
+        try FileManager.default.createDirectory(at: uploadTree.appendingPathComponent("Nested/Empty"), withIntermediateDirectories: true)
+        let batchBytes = Data("Recursive batch transfer".utf8)
+        try batchBytes.write(to: uploadTree.appendingPathComponent("Nested/inside.txt"))
+        let batchFile = root.appendingPathComponent("batch-file.txt")
+        try batchBytes.write(to: batchFile)
+        controller.uploadFiles([uploadTree, batchFile])
+        waitUntil("Recursive multi-item upload") { !controller.busy }
+        precondition(window.attachedSheet == nil, "Successful recursive upload should not show an error")
+        let remoteTree = root.appendingPathComponent("files/Batch folder")
+        precondition(FileManager.default.fileExists(atPath: remoteTree.appendingPathComponent("Nested/Empty").path))
+        precondition(tryBytes(remoteTree.appendingPathComponent("Nested/inside.txt")) == batchBytes)
+        func row(named name: String) -> Int {
+            (0..<table.numberOfRows).first { row in
+                (table.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView)?.textField?.stringValue == name
+            }!
+        }
+        let treeRow = row(named: "Batch folder")
+        let batchRow = row(named: "batch-file.txt")
+        table.selectRowIndexes(IndexSet([treeRow, batchRow]), byExtendingSelection: false)
+        controller.downloadSelected(nil)
+        waitUntil("Multi-download destination picker") { window.attachedSheet is NSOpenPanel }
+        let destinationPicker = window.attachedSheet as! NSOpenPanel
+        precondition(destinationPicker.canChooseDirectories && !destinationPicker.canChooseFiles)
+        destinationPicker.cancel(nil)
+        waitUntil("Multi-download picker cancellation") { window.attachedSheet == nil }
+        let batchDestination = root.appendingPathComponent("batch-download")
+        try FileManager.default.createDirectory(at: batchDestination, withIntermediateDirectories: false)
+        controller.retrieveSelections(to: batchDestination)
+        waitUntil("Recursive multi-item download") { !controller.busy }
+        precondition(window.attachedSheet == nil)
+        precondition(tryBytes(batchDestination.appendingPathComponent("Batch folder/Nested/inside.txt")) == batchBytes)
+        precondition(FileManager.default.fileExists(atPath: batchDestination.appendingPathComponent("Batch folder/Nested/Empty").path))
+        precondition(tryBytes(batchDestination.appendingPathComponent("batch-file.txt")) == batchBytes)
+        precondition(downloads.entries.count == 2, "Every completed file, but not a folder, belongs in history")
+        let promiseDestination = root.appendingPathComponent("promised-download")
+        try FileManager.default.createDirectory(at: promiseDestination, withIntermediateDirectories: false)
+        let treePromise = controller.outlineView(outline, pasteboardWriterForItem: outline.item(atRow: treeRow)!) as! RemoteFilePromise
+        let filePromise = controller.outlineView(outline, pasteboardWriterForItem: outline.item(atRow: batchRow)!) as! RemoteFilePromise
+        var promiseResults: [Error?] = []
+        treePromise.filePromiseProvider(treePromise, writePromiseTo: promiseDestination.appendingPathComponent("Batch folder")) { error in
+            Task { @MainActor in promiseResults.append(error) }
+        }
+        waitUntil("First delayed promise finishes") { promiseResults.count == 1 && !controller.busy }
+        precondition(window.attachedSheet == nil, "A drag group must not present results before remaining promises arrive")
+        filePromise.filePromiseProvider(filePromise, writePromiseTo: promiseDestination.appendingPathComponent("batch-file.txt")) { error in
+            Task { @MainActor in promiseResults.append(error) }
+        }
+        waitUntil("Sequential folder and file promises") { promiseResults.count == 2 && !controller.busy }
+        precondition(promiseResults.allSatisfy { $0 == nil }, "Every promise must finish without errors")
+        precondition(tryBytes(promiseDestination.appendingPathComponent("Batch folder/Nested/inside.txt")) == batchBytes)
+        precondition(tryBytes(promiseDestination.appendingPathComponent("batch-file.txt")) == batchBytes)
+        precondition(FileManager.default.fileExists(atPath: promiseDestination.appendingPathComponent("Batch folder/Nested/Empty").path))
+        precondition(downloads.entries.count == 4)
+        controller.finishFileDrag(operation: .copy)
+        // Finder may request the next item only after the first completion returns.
+        // Remember "Skip remaining" across that idle gap and delay the results sheet.
+        let uploadRow = row(named: "upload-test.txt")
+        table.selectRowIndexes(IndexSet([batchRow, uploadRow]), byExtendingSelection: false)
+        let skipFirst = controller.outlineView(outline, pasteboardWriterForItem: outline.item(atRow: batchRow)!) as! RemoteFilePromise
+        let skipSecond = controller.outlineView(outline, pasteboardWriterForItem: outline.item(atRow: uploadRow)!) as! RemoteFilePromise
+        controller.finishFileDrag(operation: .copy)
+        let conflictDestination = root.appendingPathComponent("promise-conflicts")
+        try FileManager.default.createDirectory(at: conflictDestination, withIntermediateDirectories: false)
+        let originalConflictBytes = Data("Keep these existing bytes".utf8)
+        let firstConflict = conflictDestination.appendingPathComponent("batch-file.txt")
+        let secondConflict = conflictDestination.appendingPathComponent("upload-test.txt")
+        try originalConflictBytes.write(to: firstConflict)
+        try originalConflictBytes.write(to: secondConflict)
+        var skippedResults: [Error?] = []
+        skipFirst.filePromiseProvider(skipFirst, writePromiseTo: firstConflict) { error in
+            Task { @MainActor in skippedResults.append(error) }
+        }
+        waitUntil("First promise conflict") { controller.busy && window.attachedSheet != nil }
+        let conflictControls = descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }
+        conflictControls.first { $0.title == "Apply to remaining file conflicts" }!.state = .on
+        conflictControls.first { $0.title == "Skip" }!.performClick(nil)
+        waitUntil("First skipped promise returns idle") { skippedResults.count == 1 && !controller.busy }
+        precondition(window.attachedSheet == nil, "Skipped first item must not show an early results sheet")
+        skipSecond.filePromiseProvider(skipSecond, writePromiseTo: secondConflict) { error in
+            Task { @MainActor in skippedResults.append(error) }
+        }
+        waitUntil("Delayed second promise reuses conflict choice") { skippedResults.count == 2 && !controller.busy }
+        precondition(skippedResults.allSatisfy { $0 != nil }, "Skipped promises must report unsuccessful fulfillment")
+        precondition(tryBytes(firstConflict) == originalConflictBytes && tryBytes(secondConflict) == originalConflictBytes)
+        precondition(downloads.entries.count == 4, "Skipped items must not enter history")
+        waitUntil("Drag group final results") { window.attachedSheet != nil }
+        let resultControls = descendants(window.attachedSheet!.contentView!)
+        precondition(resultControls.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("2 skipped") },
+                     "One final results sheet must summarize both skipped promises")
+        resultControls.compactMap { $0 as? NSButton }.first { $0.title == "OK" }!.performClick(nil)
+        waitUntil("Dismiss drag results") { window.attachedSheet == nil }
+        outline.expandItem(outline.item(atRow: treeRow))
+        waitUntil("Show recursive uploaded folder") { !controller.busy && outline.isItemExpanded(outline.item(atRow: treeRow)) }
+        let nestedRow = row(named: "Nested")
+        outline.expandItem(outline.item(atRow: nestedRow))
+        waitUntil("Show recursive upload contents") { !controller.busy && outline.isItemExpanded(outline.item(atRow: nestedRow)) }
+        try capture(window)
+        try Data(contentsOf: URL(fileURLWithPath: "artifacts/verification/authenticated-browser-content.png")).write(to: URL(fileURLWithPath: "artifacts/verification/recursive-transfers.png"))
+        print("PASS: multiple selection, recursive batches, empty folders, delayed file promises and retained conflict decisions")
         controller.disconnect(nil)
         waitUntil("Disconnect") { !controller.busy && table.numberOfRows == 0 }
         controller.openConnection(nil)
@@ -342,6 +465,8 @@ struct BrowserChecks {
         window.performClose(nil)
         print("PASS: authenticated native connection sheet, navigation, save cancellation, exact download, existing-file preservation, error state, saved-folder reconnect, forget and disconnect")
     }
+
+    private static func tryBytes(_ url: URL) -> Data { (try? Data(contentsOf: url)) ?? Data() }
 
     private static func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap(descendants)

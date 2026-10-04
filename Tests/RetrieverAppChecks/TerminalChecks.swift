@@ -1,5 +1,5 @@
 import AppKit
-import RetrieverCore
+@testable import RetrieverCore
 import SwiftTerm
 
 @main
@@ -17,7 +17,10 @@ struct TerminalChecks {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let request = try SSHLaunchRequest(settings: settings, path: Data(folder.path.utf8), isDirectory: true)
         let controller = SSHTerminalViewController(sshOptions: options)
-        let browser = MainWindowController(sshTerminal: controller)
+        let transport = SFTPBrowser(initialPath: Data(root.appendingPathComponent("files").path.utf8)) { settings, signal in
+            try SFTPSession(executable: URL(fileURLWithPath: "/usr/bin/ssh"), arguments: options + SFTPSession.sshArguments(settings), cancellation: signal)
+        }
+        let browser = MainWindowController(browser: transport, sshTerminal: controller)
         let host = browser.window!
         browser.showWindow(nil)
         host.makeKeyAndOrderFront(nil)
@@ -61,9 +64,11 @@ struct TerminalChecks {
         precondition(controller.terminal !== view)
         precondition(kill(oldPID, 0) == -1 && errno == ESRCH, "Replaced SSH must be reaped")
         let next = controller.terminal!
-        next.send(txt: "printf 'SSH prototype — connected\\n'; pwd\n")
+        next.send(txt: "printf 'SSH connected\\n'; pwd\n")
         wait("Replacement session") { next.getTerminal().getLine(row: 2) != nil && controller.active }
         for _ in 0..<10 { pump() }
+        let closeButton = descendants(host.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Close Terminal" }!
+        precondition(controller.active && closeButton.isHidden, "An active shell must not show Close Terminal")
         let shot = Process()
         shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         shot.arguments = ["-x", "-l", String(controller.window!.windowNumber), "artifacts/verification/ssh-terminal.png"]
@@ -83,10 +88,123 @@ struct TerminalChecks {
         // A failed cd must terminate SSH, not leave an interactive shell at home.
         controller.open(try SSHLaunchRequest(settings: settings, path: Data(folder.appendingPathComponent("missing").path.utf8), isDirectory: true))
         wait("Missing folder exits") { !controller.active }
+        pump()
+        precondition(controller.terminal != nil, "Failed startup retains diagnostics")
         controller.closeSession()
+
+        // Normal shell exits close the embedded pane after SwiftTerm cleanup.
+        for code in [0, 7] {
+            controller.open(request)
+            browser.showTerminalPane(true)
+            let exiting = controller.terminal!
+            exiting.send(txt: "exit \(code)\n")
+            wait("Normal exit closes pane") { controller.terminal == nil }
+            precondition(controller.view.isHidden)
+        }
+        controller.open(request)
+        browser.showTerminalPane(true)
+        controller.terminal!.send(txt: "exit 255\n")
+        wait("Exit255 ends process") { !controller.active }
+        pump()
+        precondition(controller.terminal != nil && !controller.view.isHidden, "Exit255 retains diagnostic pane")
+        controller.closeSession()
+
+        // Disconnect treats Files and SSH as one user-visible connection.
+        var filesConnected = false
+        Task {
+            _ = try await transport.connect(settings, cancellation: SFTPCancellation())
+            filesConnected = await transport.isConnected
+        }
+        wait("SFTP connection for combined disconnect") { filesConnected }
+        controller.open(request)
+        browser.showTerminalPane(true)
+        let disconnectPID = controller.terminal!.process.shellPid
+        let disconnectItem = NSMenuItem(title: "Disconnect", action: #selector(MainWindowController.disconnect(_:)), keyEquivalent: "")
+        precondition(browser.validateMenuItem(disconnectItem), "SSH-only UI must offer Disconnect")
+        let keepBoth = choose("Keep Session")
+        browser.disconnect(nil)
+        keepBoth.invalidate()
+        precondition(controller.active && !browser.busy)
+        filesConnected = false
+        Task { filesConnected = await transport.isConnected }
+        wait("Declined disconnect preserves SFTP") { filesConnected }
+        let disconnectBoth = choose("End Session")
+        browser.disconnect(nil)
+        disconnectBoth.invalidate()
+        wait("Disconnect closes both panes") { !browser.busy && controller.terminal == nil }
+        var verifiedDisconnected = false
+        Task { verifiedDisconnected = !(await transport.isConnected) }
+        wait("Disconnect closes SFTP") { verifiedDisconnected }
+        precondition(controller.view.isHidden && !browser.validateMenuItem(disconnectItem))
+        precondition(kill(disconnectPID, 0) == -1 && errno == ESRCH, "Disconnect must reap SSH")
+
+        // Real shell hooks, both sync directions, and conservative input gating.
+        let integrated = try SSHLaunchRequest(settings: settings, path: Data(folder.path.utf8), isDirectory: true, syncEnabled: true)
+        var reported: Data?
+        var syncStatus: String? = "waiting"
+        let originalStatusCallback = controller.onSyncStatus
+        controller.onSyncStatus = { message in
+            syncStatus = message
+            FileHandle.standardError.write(Data(("SYNC: " + (message ?? "ready") + "\n").utf8))
+            originalStatusCallback?(message)
+        }
+        controller.onDirectoryChange = { path, _ in reported = path }
+        controller.open(integrated)
+        browser.showTerminalPane(true)
+        let shell = controller.terminal!
+        let originalPath = Data(folder.resolvingSymlinksInPath().path.utf8)
+        let parentPath = Data(root.appendingPathComponent("files").resolvingSymlinksInPath().path.utf8)
+        wait("Shell integration startup") { reported == originalPath }
+        wait("Untouched initial prompt") { syncStatus == nil }
+        controller.synchronizeDirectory(parentPath, settings: settings)
+        wait("Browser folder reaches shell") { controller.currentDirectory == parentPath }
+        func type(_ text: String) { controller.send(source: shell, data: Array(text.utf8)[...]) }
+        type("builtin cd -- " + SSHLaunchRequest.quoteForCheck(folder.path))
+        type("\r")
+        wait("Shell folder reports back") { reported == originalPath && controller.currentDirectory == originalPath }
+        // A partial line must remain untouched until the user submits it.
+        type("printf 'PRESERVED_INPUT\\n'")
+        controller.synchronizeDirectory(parentPath, settings: settings)
+        for _ in 0..<3 { pump() }
+        precondition(controller.currentDirectory == originalPath)
+        type("\r")
+        wait("Deferred folder applies after submitted command") { controller.currentDirectory == parentPath }
+        let other = try ConnectionSettings(host: settings.host, username: settings.username, port: "1")
+        controller.setBrowserConnection(other)
+        controller.synchronizeDirectory(originalPath, settings: other)
+        for _ in 0..<3 { pump() }
+        precondition(controller.currentDirectory == parentPath, "Cross-connection sync is blocked")
+        controller.setSyncEnabled(false)
+        controller.setBrowserConnection(settings)
+        controller.synchronizeDirectory(originalPath, settings: settings)
+        for _ in 0..<3 { pump() }
+        precondition(controller.currentDirectory == parentPath, "Disabled sync does not send cd")
+        type("exit")
+        type("\r")
+        wait("Integrated session exits") { controller.terminal == nil }
         browser.showTerminalPane(false)
+        let settingsSuite = "RetrieverTerminalSettingsChecks.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: settingsSuite)!
+        defer { defaults.removePersistentDomain(forName: settingsSuite) }
+        let preferences = SettingsWindowController(defaults: defaults)
+        preferences.showWindow(nil)
+        preferences.window!.makeKeyAndOrderFront(nil)
+        @MainActor func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        let checkbox = descendants(preferences.window!.contentView!).compactMap { $0 as? NSButton }.first!
+        precondition(checkbox.state == .off && !defaults.bool(forKey: SettingsWindowController.syncDefaultsKey))
+        checkbox.performClick(nil)
+        precondition(defaults.bool(forKey: SettingsWindowController.syncDefaultsKey))
+        let reloaded = SettingsWindowController(defaults: defaults)
+        precondition(descendants(reloaded.window!.contentView!).compactMap { $0 as? NSButton }.first!.state == .on)
+        pump()
+        let settingsShot = Process()
+        settingsShot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        settingsShot.arguments = ["-x", "-l", String(preferences.window!.windowNumber), "artifacts/verification/ssh-folder-sync-settings.png"]
+        try settingsShot.run(); settingsShot.waitUntilExit()
+        precondition(settingsShot.terminationStatus == 0)
+        preferences.close()
         host.close()
-        print("PASS: real PTY SSH, quoted folder, keyboard focus, resizing, Ctrl-C, replacement and close cleanup, failed cd")
+        print("PASS: PTY SSH, embedded focus/appearance, resize/Ctrl-C, lifecycle exit0/7/255, diagnostics, shell hooks, bidirectional folders, partial input and cross-host sync guards")
     }
     static func pump() {
         let deadline = Date().addingTimeInterval(0.1)
@@ -98,6 +216,17 @@ struct TerminalChecks {
     static func wait(_ reason: String, until condition: () -> Bool) {
         let deadline = Date().addingTimeInterval(10)
         while !condition(), Date() < deadline { pump() }
+        if !condition() {
+            @MainActor func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+            for window in NSApp.windows {
+                guard let content = window.contentView else { continue }
+                for view in descendants(content).compactMap({ $0 as? TerminalView }) {
+                    let terminal = view.getTerminal()
+                    let text = (0..<terminal.rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true, characterProvider: { terminal.getCharacter(for: $0) }) }.joined(separator: "\n")
+                    FileHandle.standardError.write(Data((text + "\n").utf8))
+                }
+            }
+        }
         precondition(condition(), "Timed out: \(reason)")
     }
     static func choose(_ title: String) -> Timer {
@@ -113,5 +242,11 @@ struct TerminalChecks {
         RunLoop.main.add(timer, forMode: .common)
         RunLoop.main.add(timer, forMode: .modalPanel)
         return timer
+    }
+}
+
+private extension SSHLaunchRequest {
+    static func quoteForCheck(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 }

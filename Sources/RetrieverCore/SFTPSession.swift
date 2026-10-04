@@ -159,11 +159,37 @@ public final class SFTPSession {
         }
     }
 
+    /// Nil means only SSH_FX_NO_SUCH_FILE; permission and transport errors remain visible.
+    public func attributes(at path: Data) throws -> RemoteAttributes? {
+        var payload = SFTPWriter()
+        payload.bytes(path)
+        do {
+            var response = try request(7, payload: payload, expecting: 105)
+            let attributes = try response.attributes()
+            guard response.remaining == 0 else { throw SFTPError.malformedPacket }
+            return attributes
+        } catch SFTPError.server(2, _) { return nil }
+    }
+
+    public func createDirectory(at path: Data) throws {
+        var payload = SFTPWriter()
+        payload.bytes(path)
+        payload.uint32(4)
+        payload.uint32(0o700)
+        _ = try request(14, payload: payload, expecting: 101)
+    }
+
     /// Writes a sibling temporary file, then atomically publishes under an explicit destination policy.
     /// Failed reads leave the destination untouched and remove the temporary file.
     @discardableResult
     public func download(_ path: Data, to destination: URL, policy: DownloadDestinationPolicy = .exclusive, maximumBytes: UInt64? = nil, progress: (UInt64) -> Void = { _ in }) throws -> UInt64 {
-        try validateDestination(destination, policy: policy)
+        let directory = try LocalTransferDirectory(url: destination.deletingLastPathComponent())
+        return try download(path, to: directory, name: destination.lastPathComponent, policy: policy, maximumBytes: maximumBytes, progress: progress)
+    }
+
+    @discardableResult
+    public func download(_ path: Data, to directory: LocalTransferDirectory, name: String, policy: DownloadDestinationPolicy = .exclusive, maximumBytes: UInt64? = nil, progress: (UInt64) -> Void = { _ in }) throws -> UInt64 {
+        try validateDestination(directory, name: name, policy: policy)
         var payload = SFTPWriter()
         payload.bytes(path)
         payload.uint32(1) // SSH_FXF_READ
@@ -171,12 +197,10 @@ public final class SFTPSession {
         var response = try request(3, payload: payload, expecting: 102)
         let handle = try response.bytes()
         defer { finishHandle(handle) }
-        let temporary = destination.deletingLastPathComponent().appendingPathComponent(".retriever-\(UUID().uuidString).partial")
-        let descriptor = temporary.withUnsafeFileSystemRepresentation { path in
-            Darwin.open(path!, O_WRONLY | O_CREAT | O_EXCL, mode_t(0o600))
-        }
+        let temporary = ".retriever-\(UUID().uuidString).partial"
+        let descriptor = openat(directory.descriptor, temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode_t(0o600))
         guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        defer { try? FileManager.default.removeItem(at: temporary) }
+        defer { _ = unlinkat(directory.descriptor, temporary, 0) }
         let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? file.close() }
         var offset: UInt64 = 0
@@ -198,14 +222,10 @@ public final class SFTPSession {
         try file.synchronize()
         try file.close()
         try cancellation.check()
-        try validateDestination(destination, policy: policy)
-        // Exclusive rename preserves a destination that appeared during transfer,
-        // including a dangling symlink, without requiring hard-link support.
-        let published = temporary.withUnsafeFileSystemRepresentation { source in
-            destination.withUnsafeFileSystemRepresentation { target in
-                renamex_np(source!, target!, policy == .exclusive ? UInt32(RENAME_EXCL) : 0)
-            }
-        }
+        try validateDestination(directory, name: name, policy: policy)
+        // Keep publication relative to the retained parent, including after a rename.
+        let published = renameatx_np(directory.descriptor, temporary, directory.descriptor, name,
+                                     policy == .exclusive ? UInt32(RENAME_EXCL) : 0)
         guard published == 0 else {
             if errno == EEXIST { throw SFTPError.destinationExists }
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
@@ -214,35 +234,31 @@ public final class SFTPSession {
         return offset
     }
 
-    private func validateDestination(_ destination: URL, policy: DownloadDestinationPolicy) throws {
-        var info = stat()
-        let result = destination.withUnsafeFileSystemRepresentation { lstat($0!, &info) }
-        if result == 0 {
+    private func validateDestination(_ directory: LocalTransferDirectory, name: String, policy: DownloadDestinationPolicy) throws {
+        if let info = try directory.attributes(of: name) {
             guard policy == .replaceApproved else { throw SFTPError.destinationExists }
-            guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { throw SFTPError.invalidDestination }
-        } else if errno != ENOENT {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            guard info.kind == .regularFile else { throw SFTPError.invalidDestination }
         }
     }
 
     private func uploadTarget(_ path: Data, policy: UploadDestinationPolicy) throws {
-        var payload = SFTPWriter()
-        payload.bytes(path)
-        do {
-            var response = try request(7, payload: payload, expecting: 105) // LSTAT, never follow links.
-            let attributes = try response.attributes()
-            guard response.remaining == 0 else { throw SFTPError.malformedPacket }
+        if let attributes = try attributes(at: path) {
             guard attributes.permissions.map({ $0 & 0xF000 == 0x8000 }) == true else { throw SFTPError.invalidUploadFile }
             if policy == .exclusive { throw SFTPError.uploadDestinationExists }
-        } catch SFTPError.server(2, _) { /* Destination does not exist. */ }
+        }
         if policy == .replaceApproved, !supportsAtomicReplacement { throw SFTPError.uploadReplacementUnsupported }
     }
 
     /// Publish only after all writes and CLOSE succeed. Never unlink the destination.
     @discardableResult
     public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, progress: (UInt64) -> Void = { _ in }) throws -> UInt64 {
-        let descriptor = source.withUnsafeFileSystemRepresentation { Darwin.open($0!, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) }
-        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let directory = try LocalTransferDirectory(url: source.deletingLastPathComponent())
+        return try upload(from: directory, name: source.lastPathComponent, to: path, policy: policy, progress: progress)
+    }
+
+    @discardableResult
+    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, progress: (UInt64) -> Void = { _ in }) throws -> UInt64 {
+        let descriptor = try directory.openFile(named: name)
         let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? file.close() }
         var original = stat()

@@ -9,7 +9,7 @@ fi
 mkdir -p .build/checks
 xcrun swiftc -profile-generate -swift-version 6 -F "$products" -framework RetrieverCore -framework AppKit -I "$products" "$products/SwiftTerm.o" \
   -Xlinker -rpath -Xlinker "$(cd "$products" && pwd)" \
-  Sources/RetrieverApp/SSHTerminalViewController.swift Sources/RetrieverApp/AppDelegate.swift Sources/RetrieverApp/AppMenu.swift \
+  Sources/RetrieverApp/SSHTerminalViewController.swift Sources/RetrieverApp/SettingsWindowController.swift Sources/RetrieverApp/TransferCoordinator.swift Sources/RetrieverApp/RemoteFilePromise.swift Sources/RetrieverApp/AppDelegate.swift Sources/RetrieverApp/AppMenu.swift \
   Sources/RetrieverApp/ConnectionSheet.swift Sources/RetrieverApp/DownloadsWindowController.swift Sources/RetrieverApp/MainWindowController.swift \
   Sources/RetrieverApp/SSHAskpass.swift Tests/RetrieverAppChecks/WebsiteScreenshots.swift \
   -o .build/checks/WebsiteScreenshots
