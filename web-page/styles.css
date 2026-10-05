@@ -602,3 +602,7 @@ figure { margin: 0; }
 .release-screenshot img { background: var(--paper-soft); }
 .release-screenshot figcaption a { white-space: nowrap; text-underline-offset: 3px; }
 .screenshot-note { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+
+/* Reserve space while optional release metadata loads. */
+[data-release-status] { min-height: 3em; }
+footer .page-shell { flex-wrap: wrap; }

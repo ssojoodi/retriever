@@ -22,18 +22,43 @@
   <meta name="twitter:image" content="https://sojoodi.com/apps/Retriever/social-card.png">
   <meta name="twitter:image:alt" content="Retriever’s golden folder mascot beside the words Go fetch your files. Native SFTP for Mac.">
   <meta name="theme-color" content="#f6f1e8">
-  <link rel="icon" href="app-icon.png" type="image/png">
+  <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
   <link rel="stylesheet" href="styles.css">
   <script src="release.js" defer></script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "@id": "https://sojoodi.com/apps/Retriever/#app",
+  "name": "Retriever",
+  "url": "https://sojoodi.com/apps/Retriever/",
+  "description": "A native macOS SFTP browser for transferring files and folders, previewing files, and opening an SSH terminal.",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "macOS 14 or later",
+  "processorRequirements": "Apple silicon (arm64)",
+  "downloadUrl": "https://sojoodi.com/apps/Retriever/Retriever.dmg",
+  "image": "https://sojoodi.com/apps/Retriever/social-card.png",
+  "license": "https://github.com/ssojoodi/retriever/blob/main/LICENSE",
+  "author": {
+    "@type": "Person",
+    "name": "Sahand Sojoodi",
+    "url": "https://sojoodi.com/"
+  }
+}
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <div class="page-shell">
     <nav class="topbar" aria-label="Main navigation">
-      <a class="brand" href="./"><img src="app-icon.png" width="512" height="512" alt=""><span>Retriever</span></a>
+      <a class="brand" href="./"><img src="app-icon-84.png" width="42" height="42" alt=""><span>Retriever</span></a>
       <a class="topbar-note" href="release-notes.html">Release notes ↗</a>
     </nav>
-    <header class="hero" id="main">
+  </div>
+  <main id="main" tabindex="-1">
+  <div class="page-shell">
+    <header class="hero">
       <div class="hero-grid">
         <div>
           <p class="eyebrow">SFTP, made simple. For Mac.</p>
@@ -46,12 +71,11 @@
           </div>
         </div>
         <figure class="hero-visual">
-          <img class="logo-showcase" src="app-icon.png" width="512" height="512" alt="Retriever’s golden folder mascot with floppy ears and a download-arrow nose.">
+          <img class="logo-showcase" fetchpriority="high" src="app-icon.png" width="512" height="512" alt="Retriever’s golden folder mascot with floppy ears and a download-arrow nose.">
         </figure>
       </div>
     </header>
   </div>
-  <main>
     <section class="section-rule" aria-labelledby="features-title">
       <div class="page-shell split">
         <div><p class="eyebrow">Just the essentials</p><h2 id="features-title">Your server.<br>A familiar file browser.</h2><p class="body-copy">Return to your last folder, browse an expandable file tree, and preview a file before saving it. Built with native Mac controls.</p></div>
@@ -80,11 +104,11 @@
       <div class="body-copy"><p>Open the downloaded DMG and drag Retriever to Applications. Launch Retriever and choose Open Connection.</p><p>Requires an Apple silicon Mac with macOS 14 or later and an SFTP server. Transfer files and folders, and preview individual files. FTP and symbolic-link transfers are not supported. Folder sync is optional and off by default.</p></div>
     </div></section>
     <section class="section-rule"><div class="page-shell download-panel">
-      <img src="app-icon.png" width="512" height="512" alt="">
-      <div><h2>Ready to retrieve?</h2><p data-release-status>Version 0.5.0 · October 3, 2026.</p><a data-checksum hidden href="Retriever.dmg.sha256">SHA-256 checksum</a></div>
+      <img src="app-icon-156.png" width="78" height="78" loading="lazy" alt="">
+      <div><h2>Ready to retrieve?</h2><p data-release-status>Version 0.5.0 · October 3, 2026.</p><a data-checksum href="Retriever.dmg.sha256">SHA-256 checksum</a></div>
       <a class="button button-primary" data-download href="Retriever.dmg" download>Download for Mac ↓</a>
     </div></section>
   </main>
-  <footer><div class="page-shell"><span>© 2026 Sahand Sojoodi</span><a href="release-notes.html">Release notes</a><a href="https://github.com/ssojoodi/retriever">GitHub</a><a href="https://sojoodi.com/">sojoodi.com</a></div></footer>
+  <footer><div class="page-shell"><span>© 2026 Sahand Sojoodi</span><a href="release-notes.html">Release notes</a><a href="https://github.com/ssojoodi/retriever">GitHub</a><a href="https://sojoodi.com/apps/">All apps</a><a href="https://sojoodi.com/">sojoodi.com</a></div></footer>
 </body>
 </html>
