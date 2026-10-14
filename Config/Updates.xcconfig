@@ -1,0 +1,4 @@
+// Keep deployment addresses configurable without Swift source changes.
+RETRIEVER_UPDATE_MANIFEST_URL = https:/$()/sojoodi.com/apps/Retriever/release.json
+RETRIEVER_UPDATE_DOWNLOAD_URL = https:/$()/sojoodi.com/apps/Retriever/Retriever.dmg
+RETRIEVER_UPDATE_RELEASE_NOTES_URL = https:/$()/sojoodi.com/apps/Retriever/release-notes.html

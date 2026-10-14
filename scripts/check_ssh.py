@@ -20,7 +20,7 @@ terminal = '--terminal' in sys.argv or screenshots
 runner = 'ReleaseScreenshots' if screenshots else 'TerminalChecks' if terminal else ('BrowserChecks' if gui else 'SSHChecks')
 sources = ['Tests/RetrieverSSHChecks/SSHChecks.swift']
 if gui or terminal:
-    sources = ['Sources/RetrieverApp/AppDelegate.swift', 'Sources/RetrieverApp/AppMenu.swift',
+    sources = ['Sources/RetrieverApp/UpdateController.swift', 'Sources/RetrieverApp/AppDelegate.swift', 'Sources/RetrieverApp/AppMenu.swift',
                'Sources/RetrieverApp/SSHTerminalViewController.swift', 'Sources/RetrieverApp/SettingsWindowController.swift', 'Sources/RetrieverApp/TransferCoordinator.swift', 'Sources/RetrieverApp/RemoteFilePromise.swift', 'Sources/RetrieverApp/ConnectionSheet.swift', 'Sources/RetrieverApp/DownloadsWindowController.swift', 'Sources/RetrieverApp/MainWindowController.swift', 'Sources/RetrieverApp/SSHAskpass.swift',
                'Tests/RetrieverAppChecks/BrowserChecks.swift']
 if terminal:

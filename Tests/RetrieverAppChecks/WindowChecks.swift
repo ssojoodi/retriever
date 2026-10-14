@@ -69,9 +69,77 @@ struct WindowChecks {
         }
         pump()
         precondition(releasedController == nil, "Closed window controller must release")
+        checkUpdates()
         checkBusyClose()
         print("PASS: busy-close Keep Working and deferred Cancel and Close")
         print("PASS: active-window routing, initial action states, text focus, sheet cancellation, minimum-size resize, idle close and controller release")
+    }
+
+    private static func checkUpdates() {
+        let suite = "UpdateWindowChecks." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let metadata: [String: Any] = [
+            "CFBundleShortVersionString": "0.5.0",
+            "RetrieverUpdateManifestURL": "https://updates.example.com/release.json",
+            "RetrieverUpdateDownloadURL": "https://downloads.example.com/Retriever.dmg",
+            "RetrieverUpdateReleaseNotesURL": "https://example.com/releases"
+        ]
+        var opened: [URL] = []
+        let updates = UpdateController(metadata: metadata, defaults: defaults,
+            transport: { _ in
+                try await Task.sleep(for: .milliseconds(50))
+                return Data("""
+                {"version":"0.6.0","file":"Retriever.dmg","sha256":"\(String(repeating: "a", count: 64))","bytes":100,"published":"2026-10-14T00:00:00Z"}
+                """.utf8)
+            }, openURL: { opened.append($0) })
+        let delegate = AppDelegate(updateController: updates)
+        let previousDelegate = NSApp.delegate
+        NSApp.delegate = delegate
+        defer { NSApp.delegate = previousDelegate }
+        let updateMenuItem = NSApp.mainMenu!.items.first!.submenu!.items.first {
+            $0.action == #selector(AppDelegate.toggleAutomaticUpdates(_:))
+        }!
+        precondition(delegate.validateMenuItem(updateMenuItem) && updateMenuItem.state == .off)
+        let browser = MainWindowController(history: ConnectionHistory(defaults: defaults))
+        browser.showWindow(nil)
+        browser.window!.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        pump()
+        let key = NSApp.keyWindow
+        let responder = key?.firstResponder
+        precondition(!updates.checker.automaticEnabled)
+        updates.setActive(true)
+        precondition(NSApp.sendAction(#selector(AppDelegate.toggleAutomaticUpdates(_:)), to: nil, from: updateMenuItem))
+        precondition(delegate.validateMenuItem(updateMenuItem) && updateMenuItem.state == .on)
+        pump()
+        precondition(updates.windowController.status == .available(installed: "0.5.0", latest: "0.6.0"))
+        precondition(NSApp.keyWindow === key && key?.firstResponder === responder, "Automatic update must preserve browser focus")
+        precondition(!browser.busy && browser.window!.isVisible)
+        updates.windowController.openDownload()
+        updates.windowController.openNotes()
+        precondition(opened.map(\.absoluteString) == ["https://downloads.example.com/Retriever.dmg", "https://example.com/releases"])
+        for (name, state) in [("available", UpdateStatus.available(installed: "0.5.0", latest: "0.6.0")),
+                              ("checking", .checking), ("current", .current(installed: "0.5.0")),
+                              ("error", .failed("The update server returned HTTP 503. Please try again later."))] {
+            updates.windowController.present(state, manual: true)
+            pump()
+            let shot = Process()
+            shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            shot.arguments = ["-x", "-l", String(updates.windowController.window!.windowNumber), "artifacts/verification/update-\(name).png"]
+            try! shot.run(); shot.waitUntilExit()
+            precondition(shot.terminationStatus == 0)
+        }
+        precondition(NSApp.sendAction(#selector(AppDelegate.checkForUpdates(_:)), to: nil, from: nil))
+        precondition(updates.windowController.status == .checking)
+        pump()
+        precondition(updates.windowController.status == .available(installed: "0.5.0", latest: "0.6.0"))
+        updates.windowController.close()
+        precondition(browser.window!.isVisible, "Update dismissal must preserve browser")
+        updates.stop()
+        NSApp.delegate = previousDelegate
+        browser.window!.performClose(nil)
+        print("PASS: update window states, browser focus, manual checks, opt-in preference, and configured URL routing")
     }
 
     private static func checkBusyClose() {
@@ -96,6 +164,11 @@ struct WindowChecks {
             window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
             pump()
             precondition(controller!.busy, "Fixture must have an active operation")
+            let updates = UpdateWindowController(configuration: nil, openURL: { _ in })
+            let responder = window.firstResponder
+            updates.present(.available(installed: "0.5.0", latest: "0.6.0"), manual: false)
+            precondition(window.firstResponder === responder && controller!.busy, "Updates must preserve ongoing work")
+            updates.close()
             let keep = chooseModalButton("Keep Working")
             window.performClose(nil)
             keep.invalidate()

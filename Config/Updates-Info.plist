@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>RetrieverUpdateManifestURL</key>
+    <string>$(RETRIEVER_UPDATE_MANIFEST_URL)</string>
+    <key>RetrieverUpdateDownloadURL</key>
+    <string>$(RETRIEVER_UPDATE_DOWNLOAD_URL)</string>
+    <key>RetrieverUpdateReleaseNotesURL</key>
+    <string>$(RETRIEVER_UPDATE_RELEASE_NOTES_URL)</string>
+</dict>
+</plist>

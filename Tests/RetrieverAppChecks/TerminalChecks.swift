@@ -36,6 +36,13 @@ struct TerminalChecks {
         view.send(txt: "printf '\\nREADY_FOLDER='; /bin/pwd; printf 'READY_END\\n'\n")
         wait("SSH working directory") { output().contains("READY_FOLDER=" + folder.path) }
         precondition(controller.active && controller.window!.firstResponder === view)
+        let updates = UpdateWindowController(configuration: nil, openURL: { _ in })
+        let keyBeforeUpdate = NSApp.keyWindow
+        updates.present(.available(installed: "0.5.0", latest: "0.6.0"), manual: false)
+        precondition(NSApp.keyWindow === keyBeforeUpdate && controller.window!.firstResponder === view)
+        precondition(controller.active, "Automatic update must preserve SSH session")
+        updates.close()
+
         let pid = view.process.shellPid
         browser.showTerminalPane(false)
         precondition(controller.active && controller.view.isHidden)

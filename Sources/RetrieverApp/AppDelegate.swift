@@ -1,7 +1,12 @@
 import AppKit
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+    private var updateController: UpdateController?
+    init(updateController: UpdateController? = nil) {
+        self.updateController = updateController
+        super.init()
+    }
     private var helpPanel: NSPanel?
     private var settingsController: SettingsWindowController?
     private var controller: MainWindowController?
@@ -18,9 +23,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let icon = bundledIcon { NSApp.applicationIconImage = icon }
+        if updateController == nil { updateController = UpdateController() }
         controller = MainWindowController()
         controller?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        updateController?.setActive(NSApp.isActive)
+    }
+    func applicationDidBecomeActive(_ notification: Notification) { updateController?.setActive(true) }
+    func applicationDidResignActive(_ notification: Notification) { updateController?.setActive(false) }
+    @objc func checkForUpdates(_ sender: Any?) { updateController?.checkManually() }
+    @objc func toggleAutomaticUpdates(_ sender: Any?) { updateController?.toggleAutomatic() }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(toggleAutomaticUpdates(_:)) {
+            menuItem.state = updateController?.checker.automaticEnabled == true ? .on : .off
+        }
+        return true
     }
     @objc func showSettings(_ sender: Any?) {
         if settingsController == nil { settingsController = SettingsWindowController() }
@@ -95,6 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let canQuit = controller.requestClose { NSApp.terminate(nil) }
         return canQuit ? .terminateNow : .terminateCancel
     }
-    func applicationWillTerminate(_ notification: Notification) { controller?.stopTerminal(); controller?.closePreview() }
+    func applicationWillTerminate(_ notification: Notification) { updateController?.stop(); controller?.stopTerminal(); controller?.closePreview() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }

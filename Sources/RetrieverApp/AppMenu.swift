@@ -13,6 +13,8 @@ enum AppMenu {
         }
         let app = submenu("Retriever")
         app.addItem(withTitle: "About Retriever", action: #selector(AppDelegate.showAbout(_:)), keyEquivalent: "")
+        app.addItem(withTitle: "Check for Updates…", action: #selector(AppDelegate.checkForUpdates(_:)), keyEquivalent: "")
+        app.addItem(withTitle: "Automatically Check for Updates", action: #selector(AppDelegate.toggleAutomaticUpdates(_:)), keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
         app.addItem(.separator())
