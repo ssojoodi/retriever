@@ -110,6 +110,8 @@ The script opens Retriever and prints the temporary server’s connection detail
 
 ## Prepare a release
 
+Create a release branch before preparing a version. Update `MARKETING_VERSION` in `Config/Signing.xcconfig`, add the matching entry in `web-page/release-notes.html`, and update the homepage when features change. Serve the website with `python3 -m http.server 8105 --directory web-page`. In another terminal, run `node scripts/check_website.cjs` to check the pages and confirm that the latest release notes match the app version.
+
 Copy `release.env.example` to the ignored `release.env` and set an existing Developer ID signing identity and notarization Keychain profile. The file uses Make syntax.
 
 Run:
