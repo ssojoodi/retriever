@@ -2,11 +2,59 @@ import AppKit
 import Quartz
 import RetrieverCore
 
+/// A compact label that keeps its complete value for hover, accessibility, and copying.
+@MainActor
+private final class CopyValueButton: NSButton {
+    private var fullValue = ""
+
+    init(label: String) {
+        super.init(frame: .zero)
+        isBordered = false
+        alignment = .left
+        font = .systemFont(ofSize: 13)
+        cell?.lineBreakMode = .byTruncatingHead
+        setButtonType(.momentaryChange)
+        setAccessibilityLabel(label)
+        target = self
+        action = #selector(copyValue)
+    }
+    required init?(coder: NSCoder) { fatalError("Programmatic control") }
+
+    func setValue(_ value: String, display: String? = nil) {
+        fullValue = value
+        title = display ?? value
+        toolTip = value.isEmpty ? nil : value
+        setAccessibilityValue(value)
+        isEnabled = !value.isEmpty
+    }
+
+    @objc private func copyValue() {
+        guard !fullValue.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(fullValue, forType: .string)
+    }
+}
+
+enum BrowserHeaderText {
+    static func folder(_ path: String) -> String {
+        guard let leaf = path.split(separator: "/").last else { return path.isEmpty ? "" : "/" }
+        return "…/" + leaf
+    }
+
+    static func server(username: String, host: String) -> String {
+        let numeric = host.allSatisfy { $0.isNumber || $0 == "." }
+        let suffix = !host.contains(":") && !numeric && host.contains(".")
+            ? host.split(separator: ".").last.map { "." + $0 } ?? "" : ""
+        return String(username.prefix(2)) + "…@…" + suffix
+    }
+}
+
 @MainActor
 private final class FileNode {
     let entry: RemoteEntry
     let path: Data
     var children: [FileNode]?
+    var canPreview: Bool { entry.attributes.permissions.map { $0 & 0xF000 == 0x8000 } ?? false }
     init(_ entry: RemoteEntry, parent: Data) {
         self.entry = entry
         path = SFTPSession.appending(entry.nameBytes, to: parent)
@@ -33,8 +81,12 @@ private final class FolderDisclosureButton: NSButton {
 @MainActor
 private final class FileOutlineView: NSOutlineView {
     var preview: (() -> Void)?
+    var navigatePreview: ((Int) -> Bool)?
     var canOpenMenu: (() -> Bool)?
     override func keyDown(with event: NSEvent) {
+        if [125, 126].contains(event.keyCode),
+           event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+           navigatePreview?(event.keyCode == 125 ? 1 : -1) == true { return }
         if event.charactersIgnoringModifiers == " ", event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
             if !event.isARepeat { preview?() }
             return
@@ -81,10 +133,18 @@ private final class FileOutlineView: NSOutlineView {
 
 @MainActor
 private final class PreviewPanel: NSPanel {
+    var navigate: ((Int) -> Void)?
     var escape: (() -> Void)?
     override func cancelOperation(_ sender: Any?) { escape?() }
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, event.keyCode == 53, attachedSheet == nil { escape?(); return }
+        if event.type == .keyDown, attachedSheet == nil {
+            if event.keyCode == 53 { escape?(); return }
+            if [125, 126].contains(event.keyCode),
+               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
+                navigate?(event.keyCode == 125 ? 1 : -1)
+                return
+            }
+        }
         super.sendEvent(event)
     }
 }
@@ -112,7 +172,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private var previewPanel: NSPanel?
     private var previewDirectory: URL?
     private let status = NSTextField(labelWithString: "Not connected")
-    private let pathField = NSTextField(labelWithString: "")
+    private let pathField = CopyValueButton(label: "Copy remote directory")
+    private let hostField = CopyValueButton(label: "Copy connection address")
     private let table = FileOutlineView()
     private var roots: [FileNode] = []
     private var completingExpansion = false
@@ -160,6 +221,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         self.downloads = downloads
         let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Retriever"
+        window.titleVisibility = .hidden
         window.minSize = NSSize(width: 580, height: 360)
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -170,6 +232,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             return true
         }
         table.preview = { [weak self] in self?.previewSelected(nil) }
+        table.navigatePreview = { [weak self] direction in
+            guard let self, previewPanel?.isVisible == true, !busy, connected, !showingTerminal else { return false }
+            advancePreview(direction)
+            return true
+        }
         table.canOpenMenu = { [weak self] in self?.busy == false }
         window.center()
         let toolbar = NSToolbar(identifier: "Browser")
@@ -217,8 +284,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
-        pathField.lineBreakMode = .byTruncatingMiddle
-        pathField.setAccessibilityLabel("Remote directory")
+        hostField.font = .systemFont(ofSize: 13, weight: .semibold)
         status.font = .systemFont(ofSize: 11)
         status.textColor = .secondaryLabelColor
         status.lineBreakMode = .byTruncatingMiddle
@@ -236,12 +302,33 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         syncLabel.textColor = .secondaryLabelColor
         syncLabel.lineBreakMode = .byTruncatingTail
         syncLabel.isHidden = true
-        let header = NSStackView(views: [pathField, paneSwitch, closeTerminal])
-        header.orientation = .horizontal
-        header.alignment = .centerY
-        header.spacing = 8
-        pathField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let paneControls = NSStackView(views: [closeTerminal, paneSwitch])
+        paneControls.orientation = .horizontal
+        paneControls.distribution = .fill
+        paneControls.alignment = .centerY
+        paneControls.spacing = 8
+        paneControls.setContentHuggingPriority(.required, for: .horizontal)
+        paneSwitch.setContentHuggingPriority(.required, for: .horizontal)
+        closeTerminal.setContentHuggingPriority(.required, for: .horizontal)
+        paneSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
+        closeTerminal.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let header = NSView()
+        for view in [pathField, paneControls] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(view)
+        }
         pathField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        NSLayoutConstraint.activate([
+            pathField.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            pathField.trailingAnchor.constraint(equalTo: paneControls.leadingAnchor, constant: -12),
+            pathField.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            pathField.widthAnchor.constraint(greaterThanOrEqualToConstant: 0),
+            paneControls.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            paneSwitch.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            paneControls.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            paneControls.topAnchor.constraint(greaterThanOrEqualTo: header.topAnchor),
+            paneControls.bottomAnchor.constraint(lessThanOrEqualTo: header.bottomAnchor)
+        ])
         for view in [header, scroll, status, empty, progress, sshTerminal.view, syncLabel] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
@@ -250,7 +337,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             header.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
             header.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             header.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
-            header.heightAnchor.constraint(greaterThanOrEqualToConstant: 26),
+            header.heightAnchor.constraint(equalToConstant: 26),
             sshTerminal.view.topAnchor.constraint(equalTo: scroll.topAnchor),
             sshTerminal.view.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
             sshTerminal.view.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
@@ -305,12 +392,26 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         ("cancel", "Cancel", "xmark.circle", #selector(cancel(_:)))
     ]
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        Self.actions.map { .init($0.0) } + [.flexibleSpace]
+        [.init("host")] + Self.actions.map { .init($0.0) } + [.flexibleSpace]
     }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.init("connect"), .init("reconnect"), .init("up"), .init("refresh"), .flexibleSpace, .init("upload"), .init("download"), .init("history"), .init("disconnect"), .init("cancel")]
+        [.init("host"), .init("connect"), .init("reconnect"), .init("up"), .init("refresh"), .flexibleSpace, .init("upload"), .init("download"), .init("history"), .init("disconnect"), .init("cancel")]
     }
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if identifier.rawValue == "host" {
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = ""
+            item.autovalidates = false
+            item.paletteLabel = "Server hostname"
+            item.view = hostField
+            item.visibilityPriority = .high
+            hostField.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                hostField.widthAnchor.constraint(equalToConstant: 160),
+                hostField.heightAnchor.constraint(equalToConstant: 24)
+            ])
+            return item
+        }
         guard let definition = Self.actions.first(where: { $0.0 == identifier.rawValue }) else { return nil }
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = definition.1
@@ -338,7 +439,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         case #selector(goUp(_:)): return directory != nil && directory?.path != Data("/".utf8)
         case #selector(refresh(_:)), #selector(disconnect(_:)), #selector(uploadSelected(_:)): return directory != nil
         case #selector(downloadSelected(_:)): return !selectedNodes.isEmpty && selectedNodes.contains { !$0.entry.attributes.isSymbolicLink }
-        case #selector(previewSelected(_:)): return selectedNodes.count == 1 && (selected.map { !$0.attributes.isDirectory && !$0.attributes.isSymbolicLink } ?? false)
+        case #selector(previewSelected(_:)): return selectedNodes.count == 1 && selectedNode?.canPreview == true
         case #selector(sshIntoFolder(_:)): return selectedNodes.count == 1 && (selected.map { !$0.attributes.isSymbolicLink && ($0.attributes.isDirectory || $0.attributes.permissions.map { $0 & 0xF000 == 0x8000 } == true) } ?? false)
         case #selector(openSelected(_:)): return selectedNodes.count == 1
         default: return false
@@ -346,19 +447,28 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { window?.attachedSheet == nil && enabled(menuItem.action) }
     private func updateControls() {
-        for item in window?.toolbar?.items ?? [] { item.isEnabled = enabled(item.action) }
+        for item in window?.toolbar?.items ?? [] where item.itemIdentifier.rawValue != "host" { item.isEnabled = enabled(item.action) }
         table.isEnabled = true
         scroll.isHidden = showingTerminal || directory == nil
         empty.isHidden = showingTerminal || !(directory == nil || directory?.entries.isEmpty == true)
         empty.stringValue = directory == nil ? "Open a connection to browse your files." : "This folder is empty."
-        pathField.stringValue = directory.map { String(decoding: $0.path, as: UTF8.self) } ?? ""
+        let displayedSettings = showingTerminal ? sshTerminal.sessionSettings : activeSettings
+        if let settings = displayedSettings {
+            hostField.setValue("\(settings.username)@\(settings.host)",
+                               display: BrowserHeaderText.server(username: settings.username, host: settings.host))
+        } else {
+            hostField.setValue("")
+            hostField.title = "Retriever"
+        }
+        let folder = showingTerminal ? sshTerminal.sessionFolder
+            : directory.map { String(decoding: $0.path, as: UTF8.self) } ?? ""
+        pathField.setValue(folder, display: BrowserHeaderText.folder(folder))
         sshTerminal.view.isHidden = !showingTerminal
         paneSwitch.isHidden = sshTerminal.terminal == nil
         closeTerminal.isHidden = sshTerminal.terminal == nil || sshTerminal.active
         syncLabel.isHidden = !showingTerminal || syncLabel.stringValue.isEmpty || busy
         status.isHidden = !syncLabel.isHidden
         paneSwitch.selectedSegment = showingTerminal ? 1 : 0
-        if showingTerminal { pathField.stringValue = sshTerminal.sessionTitle }
         if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
     }
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
@@ -828,6 +938,23 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             // another promised file while the operation finishes on the actor.
         }
     }
+    private func advancePreview(_ direction: Int) {
+        guard previewPanel?.isVisible == true, !busy, connected, !showingTerminal,
+              window?.attachedSheet == nil, previewPanel?.attachedSheet == nil else { return }
+        var row = table.selectedRow
+        if row < 0 { row = direction > 0 ? -1 : table.numberOfRows }
+        row += direction
+        while row >= 0 && row < table.numberOfRows {
+            if let node = table.item(atRow: row) as? FileNode, node.canPreview {
+                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                table.scrollRowToVisible(row)
+                previewSelected(nil)
+                return
+            }
+            row += direction
+        }
+    }
+
     @objc func previewSelected(_ sender: Any?) {
         guard window?.attachedSheet == nil, enabled(#selector(previewSelected(_:))), let node = selectedNode else { return }
         if node.entry.attributes.size.map({ $0 > 1_000_000 }) ?? true { confirmPreview(node) }
@@ -844,6 +971,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         alert.beginSheetModal(for: window) { [weak self] result in
             guard let self else { return }
             updateControls()
+            previewPanel?.makeKeyAndOrderFront(nil)
             if result == .alertSecondButtonReturn { preparePreview(node, approved: true) }
         }
         updateControls()
@@ -873,12 +1001,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
                 return
             }
             try signal.check()
+            let previousFrame = previewPanel?.frame
             closePreview()
             let panel = PreviewPanel(contentRect: NSRect(x: 0, y: 0, width: 720, height: 540), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             panel.escape = { [weak self] in
                 guard let self else { return }
                 if preparingPreview && busy { cancel(nil) } else { closePreview() }
             }
+            panel.navigate = { [weak self] direction in self?.advancePreview(direction) }
             panel.title = node.entry.name
             panel.minSize = NSSize(width: 360, height: 260)
             panel.isReleasedWhenClosed = false
@@ -890,7 +1020,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             previewDirectory = temporary
             previewPanel = panel
             presented = true
-            panel.center()
+            if let previousFrame { panel.setFrame(previousFrame, display: false) } else { panel.center() }
             panel.makeKeyAndOrderFront(nil)
             status.stringValue = "Previewing \(node.entry.name)"
         }
@@ -966,7 +1096,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         return false
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if sender === previewPanel { return true }
+        if sender === previewPanel {
+            if preparingPreview && busy { cancel(nil) }
+            return true
+        }
         return requestClose { [weak sender] in sender?.performClose(nil) }
     }
     func windowWillClose(_ notification: Notification) {

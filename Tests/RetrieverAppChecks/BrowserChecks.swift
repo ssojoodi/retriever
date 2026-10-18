@@ -451,6 +451,7 @@ struct BrowserChecks {
         try capture(window)
         try Data(contentsOf: URL(fileURLWithPath: "artifacts/verification/authenticated-browser-content.png")).write(to: URL(fileURLWithPath: "artifacts/verification/recursive-transfers.png"))
         print("PASS: multiple selection, recursive batches, empty folders, delayed file promises and retained conflict decisions")
+        try checkPreviewNavigation(controller, outline: outline, root: root, downloads: downloads)
         controller.disconnect(nil)
         waitUntil("Disconnect") { !controller.busy && table.numberOfRows == 0 }
         controller.openConnection(nil)
@@ -464,6 +465,128 @@ struct BrowserChecks {
         waitUntil("Forget sheet dismissal") { window.attachedSheet == nil }
         window.performClose(nil)
         print("PASS: authenticated native connection sheet, navigation, save cancellation, exact download, existing-file preservation, error state, saved-folder reconnect, forget and disconnect")
+    }
+
+    private static func checkPreviewNavigation(_ controller: MainWindowController, outline: NSOutlineView,
+                                               root: URL, downloads: DownloadHistory) throws {
+        let window = controller.window!
+        let fixture = root.appendingPathComponent("files/Preview navigation")
+        try FileManager.default.createDirectory(at: fixture.appendingPathComponent("A folder"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: fixture.appendingPathComponent("B folder"), withIntermediateDirectories: true)
+        let firstBytes = Data("First preview\n".utf8)
+        let secondBytes = Data("Second preview\n".utf8)
+        try firstBytes.write(to: fixture.appendingPathComponent("A folder/first.txt"))
+        let secondFile = fixture.appendingPathComponent("second.txt")
+        try secondBytes.write(to: secondFile)
+        try Data(repeating: 65, count: 1_000_001).write(to: fixture.appendingPathComponent("third-large.txt"))
+        try FileManager.default.createSymbolicLink(at: fixture.appendingPathComponent("between-link.txt"), withDestinationURL: secondFile)
+        let historyCount = downloads.entries.count
+        func row(_ name: String) -> Int {
+            (0..<outline.numberOfRows).first {
+                (outline.view(atColumn: 0, row: $0, makeIfNecessary: true) as? NSTableCellView)?.textField?.stringValue == name
+            }!
+        }
+        func select(_ name: String) { outline.selectRowIndexes(IndexSet(integer: row(name)), byExtendingSelection: false) }
+        func panel(_ name: String) -> NSWindow {
+            NSApp.windows.first { $0.isVisible && $0.title == name && $0.contentView is QLPreviewView }!
+        }
+        func waitPreview(_ name: String) {
+            waitUntil("Preview \(name)") { !controller.busy && NSApp.windows.contains { $0.isVisible && $0.title == name && $0.contentView is QLPreviewView } }
+        }
+        func url(_ panel: NSWindow) -> URL { (panel.contentView as! QLPreviewView).previewItem.previewItemURL! }
+        func arrow(_ panel: NSWindow, down: Bool) {
+            panel.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, characters: down ? "\u{f701}" : "\u{f700}",
+                charactersIgnoringModifiers: down ? "\u{f701}" : "\u{f700}", isARepeat: false, keyCode: down ? 125 : 126)!)
+        }
+        func confirm(_ title: String) {
+            descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == title }!.performClick(nil)
+        }
+        controller.refresh(nil)
+        waitUntil("Navigation fixture appears") { !controller.busy }
+        select("Preview navigation")
+        controller.openSelected(nil)
+        waitUntil("Open navigation fixture") { !controller.busy && outline.numberOfRows == 5 }
+        outline.expandItem(outline.item(atRow: row("A folder")))
+        waitUntil("Expand first preview folder") { !controller.busy && outline.numberOfRows == 6 }
+        select("first.txt")
+        controller.previewSelected(nil)
+        waitPreview("first.txt")
+        var first = panel("first.txt")
+        first.setContentSize(NSSize(width: 610, height: 390))
+        let frame = first.frame
+        let originalURL = url(first)
+        arrow(first, down: false)
+        precondition(!controller.busy && outline.selectedRow == row("first.txt"), "Up at first file must not wrap or preview a folder")
+        arrow(first, down: true)
+        precondition(controller.busy && first.isVisible && FileManager.default.fileExists(atPath: originalURL.path))
+        precondition(outline.selectedRow == row("second.txt"), "Skip the intervening folder and symbolic link")
+        arrow(first, down: false)
+        precondition(outline.selectedRow == row("second.txt"), "Busy preview must not start another navigation")
+        waitPreview("second.txt")
+        var second = panel("second.txt")
+        precondition(second.frame == frame && tryBytes(url(second)) == secondBytes, "Preserve frame and retrieve the selected file")
+        precondition(!FileManager.default.fileExists(atPath: originalURL.deletingLastPathComponent().path))
+        arrow(second, down: false)
+        waitPreview("first.txt")
+        precondition(outline.selectedRow == row("first.txt"))
+        // The outline also advances previews when it has keyboard focus.
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(outline)
+        outline.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\u{f701}", charactersIgnoringModifiers: "\u{f701}",
+            isARepeat: false, keyCode: 125)!)
+        waitPreview("second.txt")
+        second = panel("second.txt")
+        let secondURL = url(second)
+        arrow(second, down: true)
+        precondition(!controller.busy && window.attachedSheet != nil && second.isVisible, "Large file requires approval before transfer")
+        arrow(second, down: false)
+        precondition(outline.selectedRow == row("third-large.txt"), "Do not navigate while confirming")
+        confirm("Cancel")
+        waitUntil("Decline large navigation") { window.attachedSheet == nil }
+        precondition(second.isVisible && FileManager.default.fileExists(atPath: secondURL.path), "Decline must preserve the existing preview")
+        select("second.txt")
+        arrow(second, down: true)
+        confirm("Download and Preview")
+        waitPreview("third-large.txt")
+        let large = panel("third-large.txt")
+        precondition(tryBytes(url(large)).count == 1_000_001)
+        arrow(large, down: true)
+        precondition(!controller.busy && large.isVisible, "Down at last file must not wrap")
+        arrow(large, down: false)
+        waitPreview("second.txt")
+        let shot = Process()
+        shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        shot.arguments = ["-x", "-l", String(panel("second.txt").windowNumber), "artifacts/verification/preview-arrow-navigation.png"]
+        try shot.run(); shot.waitUntilExit()
+        precondition(shot.terminationStatus == 0)
+        arrow(panel("second.txt"), down: false)
+        waitPreview("first.txt")
+        first = panel("first.txt")
+        let retainedURL = url(first)
+        try FileManager.default.removeItem(at: secondFile)
+        arrow(first, down: true)
+        waitUntil("Failed replacement preview") { !controller.busy && window.attachedSheet != nil }
+        precondition(first.isVisible && tryBytes(retainedURL) == firstBytes, "Failed retrieval must preserve the previous preview")
+        confirm("OK")
+        waitUntil("Dismiss preview error") { window.attachedSheet == nil }
+        try secondBytes.write(to: secondFile)
+        select("first.txt")
+        arrow(first, down: true)
+        first.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: first.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+            isARepeat: false, keyCode: 53)!)
+        waitUntil("Cancel replacement preview") { !controller.busy }
+        precondition(first.isVisible && tryBytes(retainedURL) == firstBytes)
+        select("first.txt")
+        arrow(first, down: true)
+        first.performClose(nil)
+        waitUntil("Close during replacement preview") { !controller.busy }
+        precondition(!NSApp.windows.contains { $0.isVisible && $0.contentView is QLPreviewView }, "Close must cancel pending preview without reopening it")
+        precondition(!FileManager.default.fileExists(atPath: retainedURL.deletingLastPathComponent().path))
+        precondition(downloads.entries.count == historyCount, "Preview navigation must not add download history")
+        print("PASS: preview Up/Down, outline navigation, folder/symlink skipping, bounds, frame preservation, large-file approval/decline, errors, cancellation and cleanup")
     }
 
     private static func tryBytes(_ url: URL) -> Data { (try? Data(contentsOf: url)) ?? Data() }
