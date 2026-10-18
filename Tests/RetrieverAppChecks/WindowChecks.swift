@@ -5,6 +5,14 @@ import AppKit
 @MainActor
 struct WindowChecks {
     static func main() {
+        precondition(BrowserHeaderText.folder("/home/sample/project/.git/hooks") == "…/hooks")
+        precondition(BrowserHeaderText.folder("/home/sample/café/") == "…/café")
+        precondition(BrowserHeaderText.folder("/") == "/")
+        precondition(BrowserHeaderText.folder("") == "")
+        precondition(BrowserHeaderText.server(username: "someone", host: "private.server.example.net") == "so…@….net")
+        for host in ["127.0.0.1", "::1", "localhost"] {
+            precondition(BrowserHeaderText.server(username: "a", host: host) == "a…@…")
+        }
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         app.finishLaunching()
@@ -130,6 +138,8 @@ struct WindowChecks {
             try! shot.run(); shot.waitUntilExit()
             precondition(shot.terminationStatus == 0)
         }
+        // This state check simulates foreground presentation independently of desktop focus.
+        updates.setActive(true)
         precondition(NSApp.sendAction(#selector(AppDelegate.checkForUpdates(_:)), to: nil, from: nil))
         precondition(updates.windowController.status == .checking)
         pump()

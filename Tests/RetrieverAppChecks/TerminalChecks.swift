@@ -35,7 +35,7 @@ struct TerminalChecks {
         }
         // Wait for the interactive shell to initialize before sending the probe.
         wait("Interactive shell startup") { !output().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        checkPaneHeader(browser: browser, folder: folder.path, hostname: settings.host)
+        checkPaneHeader(browser: browser, folder: folder.path, settings: settings)
         view.send([21]) // Clear any incidental input before the fixture probe.
         view.send(txt: "printf '\\nREADY_FOLDER='; /bin/pwd; printf 'READY_END\\n'\n")
         wait("SSH working directory") { output().contains("READY_FOLDER=" + folder.path) }
@@ -218,7 +218,7 @@ struct TerminalChecks {
         host.close()
         print("PASS: PTY SSH, embedded focus/appearance, resize/Ctrl-C, lifecycle exit0/7/255, diagnostics, shell hooks, bidirectional folders, partial input and cross-host sync guards")
     }
-    static func checkPaneHeader(browser: MainWindowController, folder: String, hostname: String) {
+    static func checkPaneHeader(browser: MainWindowController, folder: String, settings: ConnectionSettings) {
         let window = browser.window!
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         window.contentView!.layoutSubtreeIfNeeded()
@@ -227,8 +227,9 @@ struct TerminalChecks {
         let path = controls.compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "Copy remote directory" }!
         let toggle = controls.compactMap { $0 as? NSSegmentedControl }.first!
         let host = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "host" }!.view as! NSButton
-        precondition(path.title == folder && path.toolTip == folder)
-        precondition(host.title == hostname && host.toolTip == hostname)
+        let address = "\(settings.username)@\(settings.host)"
+        precondition(path.title == BrowserHeaderText.folder(folder) && path.toolTip == folder)
+        precondition(host.title == BrowserHeaderText.server(username: settings.username, host: settings.host) && host.toolTip == address)
         precondition(path.cell!.lineBreakMode == .byTruncatingHead && host.cell!.lineBreakMode == .byTruncatingHead)
         // Restore the user's clipboard after exercising the real controls.
         let saved = NSPasteboard.general.pasteboardItems?.map { item in
@@ -243,7 +244,7 @@ struct TerminalChecks {
             }
             NSPasteboard.general.writeObjects(items)
         }
-        for (button, value) in [(path, folder), (host, hostname)] {
+        for (button, value) in [(path, folder), (host, address)] {
             button.performClick(nil)
             precondition(NSPasteboard.general.string(forType: .string) == value, "Copy complete value")
             precondition(window.firstResponder === browserTerminal(in: window), "Copy must retain terminal focus")
@@ -263,10 +264,10 @@ struct TerminalChecks {
                 precondition(path.convert(path.bounds, to: window.contentView).maxX < toggle.convert(toggle.bounds, to: window.contentView).minX)
             }
         }
-        path.title = folder
+        path.title = BrowserHeaderText.folder(folder)
         // Screenshot only fixture identities, never personal host details.
-        host.title = "sample-server.example.test"
-        path.title = "/home/sample/" + String(repeating: "nested-folder/", count: 12) + "databases"
+        host.title = BrowserHeaderText.server(username: "sample", host: "sample-server.example.test")
+        path.title = BrowserHeaderText.folder("/home/sample/" + String(repeating: "nested-folder/", count: 12) + "hooks")
         window.setContentSize(NSSize(width: 820, height: 540))
         window.contentView!.layoutSubtreeIfNeeded()
         pump()
@@ -275,8 +276,8 @@ struct TerminalChecks {
         shot.arguments = ["-x", "-l", String(window.windowNumber), "artifacts/verification/pane-header-terminal.png"]
         try! shot.run(); shot.waitUntilExit()
         precondition(shot.terminationStatus == 0)
-        host.title = hostname
-        path.title = folder
+        host.title = BrowserHeaderText.server(username: settings.username, host: settings.host)
+        path.title = BrowserHeaderText.folder(folder)
         print("PASS: trailing pane controls, leading truncation, full-value hover/copy, and preserved terminal focus at 580/820/1120px")
     }
     static func browserTerminal(in window: NSWindow) -> NSView? {

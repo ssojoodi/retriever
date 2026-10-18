@@ -5,6 +5,8 @@ import RetrieverCore
 /// A compact label that keeps its complete value for hover, accessibility, and copying.
 @MainActor
 private final class CopyValueButton: NSButton {
+    private var fullValue = ""
+
     init(label: String) {
         super.init(frame: .zero)
         isBordered = false
@@ -18,17 +20,32 @@ private final class CopyValueButton: NSButton {
     }
     required init?(coder: NSCoder) { fatalError("Programmatic control") }
 
-    func setValue(_ value: String) {
-        title = value
+    func setValue(_ value: String, display: String? = nil) {
+        fullValue = value
+        title = display ?? value
         toolTip = value.isEmpty ? nil : value
         setAccessibilityValue(value)
         isEnabled = !value.isEmpty
     }
 
     @objc private func copyValue() {
-        guard !title.isEmpty else { return }
+        guard !fullValue.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(title, forType: .string)
+        NSPasteboard.general.setString(fullValue, forType: .string)
+    }
+}
+
+enum BrowserHeaderText {
+    static func folder(_ path: String) -> String {
+        guard let leaf = path.split(separator: "/").last else { return path.isEmpty ? "" : "/" }
+        return "…/" + leaf
+    }
+
+    static func server(username: String, host: String) -> String {
+        let numeric = host.allSatisfy { $0.isNumber || $0 == "." }
+        let suffix = !host.contains(":") && !numeric && host.contains(".")
+            ? host.split(separator: ".").last.map { "." + $0 } ?? "" : ""
+        return String(username.prefix(2)) + "…@…" + suffix
     }
 }
 
@@ -143,7 +160,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private var previewDirectory: URL?
     private let status = NSTextField(labelWithString: "Not connected")
     private let pathField = CopyValueButton(label: "Copy remote directory")
-    private let hostField = CopyValueButton(label: "Copy server hostname")
+    private let hostField = CopyValueButton(label: "Copy connection address")
     private let table = FileOutlineView()
     private var roots: [FileNode] = []
     private var completingExpansion = false
@@ -418,16 +435,22 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         empty.isHidden = showingTerminal || !(directory == nil || directory?.entries.isEmpty == true)
         empty.stringValue = directory == nil ? "Open a connection to browse your files." : "This folder is empty."
         let displayedSettings = showingTerminal ? sshTerminal.sessionSettings : activeSettings
-        hostField.setValue(displayedSettings?.host ?? "")
-        if displayedSettings == nil { hostField.title = "Retriever" }
-        pathField.setValue(directory.map { String(decoding: $0.path, as: UTF8.self) } ?? "")
+        if let settings = displayedSettings {
+            hostField.setValue("\(settings.username)@\(settings.host)",
+                               display: BrowserHeaderText.server(username: settings.username, host: settings.host))
+        } else {
+            hostField.setValue("")
+            hostField.title = "Retriever"
+        }
+        let folder = showingTerminal ? sshTerminal.sessionFolder
+            : directory.map { String(decoding: $0.path, as: UTF8.self) } ?? ""
+        pathField.setValue(folder, display: BrowserHeaderText.folder(folder))
         sshTerminal.view.isHidden = !showingTerminal
         paneSwitch.isHidden = sshTerminal.terminal == nil
         closeTerminal.isHidden = sshTerminal.terminal == nil || sshTerminal.active
         syncLabel.isHidden = !showingTerminal || syncLabel.stringValue.isEmpty || busy
         status.isHidden = !syncLabel.isHidden
         paneSwitch.selectedSegment = showingTerminal ? 1 : 0
-        if showingTerminal { pathField.setValue(sshTerminal.sessionFolder) }
         if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
     }
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
