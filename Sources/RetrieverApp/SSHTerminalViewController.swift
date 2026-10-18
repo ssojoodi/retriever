@@ -60,7 +60,7 @@ final class SSHTerminalViewController: NSViewController,
     }
     override func loadView() { view = NSView() }
     var window: NSWindow? { view.window }
-    private(set) var sessionTitle = ""
+    private(set) var sessionFolder = ""
     required init?(coder: NSCoder) { fatalError("Programmatic window") }
 
     @discardableResult
@@ -79,7 +79,7 @@ final class SSHTerminalViewController: NSViewController,
         view.setAccessibilityLabel("SSH terminal")
         terminal = view
         self.view.addSubview(view)
-        sessionTitle = request.title
+        sessionFolder = request.folder
         sessionSettings = request.settings
         browserSettings = request.settings
         syncToken = request.syncToken
@@ -211,8 +211,8 @@ final class SSHTerminalViewController: NSViewController,
             guard promptGate.prompt(serial: serial) else { return }
             let previous = lastShellPath
             lastShellPath = path
-            if let settings = sessionSettings, let folder = String(data: path, encoding: .utf8) {
-                sessionTitle = "\(settings.username)@\(settings.host) — \(folder)"
+            if let folder = String(data: path, encoding: .utf8) {
+                sessionFolder = folder
             }
             let revision = inputRevision
             let navigation = navigationRevision
