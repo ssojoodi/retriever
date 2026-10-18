@@ -29,6 +29,8 @@ const fs = require('node:fs');
     const version = fs.readFileSync('Config/Signing.xcconfig', 'utf8').match(/^MARKETING_VERSION\s*=\s*(\d+\.\d+\.\d+)$/m)?.[1];
     assert.ok(version, 'Shared app version must be present');
     assert.equal(await page.locator('.release').first().getAttribute('id'),'v'+version.replaceAll('.', '-'), 'Newest release notes must match the app version');
+    assert.equal(await page.locator('#v0-7-0 time').getAttribute('datetime'),'2026-10-17');
+    assert.match(await page.locator('#v0-7-0').textContent(), /Up\/Down/);
     assert.equal(await page.locator('#v0-6-0 time').getAttribute('datetime'),'2026-10-16');
     assert.match(await page.locator('#v0-6-0').textContent(), /Check for Updates/);
     assert.match(await page.locator('#v0-6-0').textContent(), /off by default/);
