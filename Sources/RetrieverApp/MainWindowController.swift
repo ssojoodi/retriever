@@ -54,6 +54,7 @@ private final class FileNode {
     let entry: RemoteEntry
     let path: Data
     var children: [FileNode]?
+    var canPreview: Bool { entry.attributes.permissions.map { $0 & 0xF000 == 0x8000 } ?? false }
     init(_ entry: RemoteEntry, parent: Data) {
         self.entry = entry
         path = SFTPSession.appending(entry.nameBytes, to: parent)
@@ -80,8 +81,12 @@ private final class FolderDisclosureButton: NSButton {
 @MainActor
 private final class FileOutlineView: NSOutlineView {
     var preview: (() -> Void)?
+    var navigatePreview: ((Int) -> Bool)?
     var canOpenMenu: (() -> Bool)?
     override func keyDown(with event: NSEvent) {
+        if [125, 126].contains(event.keyCode),
+           event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+           navigatePreview?(event.keyCode == 125 ? 1 : -1) == true { return }
         if event.charactersIgnoringModifiers == " ", event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
             if !event.isARepeat { preview?() }
             return
@@ -128,10 +133,18 @@ private final class FileOutlineView: NSOutlineView {
 
 @MainActor
 private final class PreviewPanel: NSPanel {
+    var navigate: ((Int) -> Void)?
     var escape: (() -> Void)?
     override func cancelOperation(_ sender: Any?) { escape?() }
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, event.keyCode == 53, attachedSheet == nil { escape?(); return }
+        if event.type == .keyDown, attachedSheet == nil {
+            if event.keyCode == 53 { escape?(); return }
+            if [125, 126].contains(event.keyCode),
+               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
+                navigate?(event.keyCode == 125 ? 1 : -1)
+                return
+            }
+        }
         super.sendEvent(event)
     }
 }
@@ -219,6 +232,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             return true
         }
         table.preview = { [weak self] in self?.previewSelected(nil) }
+        table.navigatePreview = { [weak self] direction in
+            guard let self, previewPanel?.isVisible == true, !busy, connected, !showingTerminal else { return false }
+            advancePreview(direction)
+            return true
+        }
         table.canOpenMenu = { [weak self] in self?.busy == false }
         window.center()
         let toolbar = NSToolbar(identifier: "Browser")
@@ -421,7 +439,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         case #selector(goUp(_:)): return directory != nil && directory?.path != Data("/".utf8)
         case #selector(refresh(_:)), #selector(disconnect(_:)), #selector(uploadSelected(_:)): return directory != nil
         case #selector(downloadSelected(_:)): return !selectedNodes.isEmpty && selectedNodes.contains { !$0.entry.attributes.isSymbolicLink }
-        case #selector(previewSelected(_:)): return selectedNodes.count == 1 && (selected.map { !$0.attributes.isDirectory && !$0.attributes.isSymbolicLink } ?? false)
+        case #selector(previewSelected(_:)): return selectedNodes.count == 1 && selectedNode?.canPreview == true
         case #selector(sshIntoFolder(_:)): return selectedNodes.count == 1 && (selected.map { !$0.attributes.isSymbolicLink && ($0.attributes.isDirectory || $0.attributes.permissions.map { $0 & 0xF000 == 0x8000 } == true) } ?? false)
         case #selector(openSelected(_:)): return selectedNodes.count == 1
         default: return false
@@ -920,6 +938,23 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             // another promised file while the operation finishes on the actor.
         }
     }
+    private func advancePreview(_ direction: Int) {
+        guard previewPanel?.isVisible == true, !busy, connected, !showingTerminal,
+              window?.attachedSheet == nil, previewPanel?.attachedSheet == nil else { return }
+        var row = table.selectedRow
+        if row < 0 { row = direction > 0 ? -1 : table.numberOfRows }
+        row += direction
+        while row >= 0 && row < table.numberOfRows {
+            if let node = table.item(atRow: row) as? FileNode, node.canPreview {
+                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                table.scrollRowToVisible(row)
+                previewSelected(nil)
+                return
+            }
+            row += direction
+        }
+    }
+
     @objc func previewSelected(_ sender: Any?) {
         guard window?.attachedSheet == nil, enabled(#selector(previewSelected(_:))), let node = selectedNode else { return }
         if node.entry.attributes.size.map({ $0 > 1_000_000 }) ?? true { confirmPreview(node) }
@@ -936,6 +971,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         alert.beginSheetModal(for: window) { [weak self] result in
             guard let self else { return }
             updateControls()
+            previewPanel?.makeKeyAndOrderFront(nil)
             if result == .alertSecondButtonReturn { preparePreview(node, approved: true) }
         }
         updateControls()
@@ -965,12 +1001,14 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
                 return
             }
             try signal.check()
+            let previousFrame = previewPanel?.frame
             closePreview()
             let panel = PreviewPanel(contentRect: NSRect(x: 0, y: 0, width: 720, height: 540), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             panel.escape = { [weak self] in
                 guard let self else { return }
                 if preparingPreview && busy { cancel(nil) } else { closePreview() }
             }
+            panel.navigate = { [weak self] direction in self?.advancePreview(direction) }
             panel.title = node.entry.name
             panel.minSize = NSSize(width: 360, height: 260)
             panel.isReleasedWhenClosed = false
@@ -982,7 +1020,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             previewDirectory = temporary
             previewPanel = panel
             presented = true
-            panel.center()
+            if let previousFrame { panel.setFrame(previousFrame, display: false) } else { panel.center() }
             panel.makeKeyAndOrderFront(nil)
             status.stringValue = "Previewing \(node.entry.name)"
         }
@@ -1058,7 +1096,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         return false
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if sender === previewPanel { return true }
+        if sender === previewPanel {
+            if preparingPreview && busy { cancel(nil) }
+            return true
+        }
         return requestClose { [weak sender] in sender?.performClose(nil) }
     }
     func windowWillClose(_ notification: Notification) {
