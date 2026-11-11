@@ -136,22 +136,22 @@ public actor SFTPBrowser {
     }
 
     @discardableResult
-    public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+    public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }, finishing: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
         guard session != nil else { throw SFTPError.disconnected }
         let directory = try LocalTransferDirectory(url: source.deletingLastPathComponent())
-        return try upload(from: directory, name: source.lastPathComponent, to: path, policy: policy, cancellation: cancellation, progress: progress)
+        return try upload(from: directory, name: source.lastPathComponent, to: path, policy: policy, cancellation: cancellation, progress: progress, finishing: finishing)
     }
 
     @discardableResult
-    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }, finishing: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
         guard let session else { throw SFTPError.disconnected }
         session.cancellation = cancellation
         do {
             var lastUpdate: TimeInterval = 0
-            let total = try session.upload(from: directory, name: name, to: path, policy: policy) { bytes in
+            let total = try session.upload(from: directory, name: name, to: path, policy: policy, progress: { bytes in
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastUpdate >= 0.1 { progress(bytes); lastUpdate = now }
-            }
+            }, finishing: finishing)
             progress(total)
             return total
         } catch { handleFailure(error); throw error }
