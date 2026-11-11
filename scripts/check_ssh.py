@@ -14,7 +14,8 @@ os.chdir(repo)
 products = (Path(sys.argv[1] if len(sys.argv) > 1 else '.build/DerivedData') / f'Build/Products/{os.environ.get("CONFIGURATION", "Debug")}').resolve()
 checks = repo / '.build/checks'
 checks.mkdir(parents=True, exist_ok=True)
-gui = '--gui' in sys.argv
+upload_finalization = '--upload-finalization' in sys.argv
+gui = '--gui' in sys.argv or upload_finalization
 screenshots = '--screenshots' in sys.argv
 terminal = '--terminal' in sys.argv or screenshots
 runner = 'ReleaseScreenshots' if screenshots else 'TerminalChecks' if terminal else ('BrowserChecks' if gui else 'SSHChecks')
@@ -84,7 +85,7 @@ Subsystem sftp internal-sftp
                         raise RuntimeError('Fixture did not start')
                     time.sleep(0.05)
             environment = dict(os.environ, LLVM_PROFILE_FILE=str(checks / 'ssh-%p.profraw'))
-            subprocess.run([str(checks / runner), str(root), str(port), getpass.getuser()], env=environment, check=True, timeout=45)
+            subprocess.run([str(checks / runner), str(root), str(port), getpass.getuser()] + (['--upload-finalization'] if upload_finalization else []), env=environment, check=True, timeout=45)
         finally:
             server.terminate()
             try:

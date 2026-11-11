@@ -794,20 +794,35 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             progress: { [weak self] value in
                 guard let self, cancellation === signal else { return }
                 let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: value.bytes), countStyle: .file)
+                if value.finishing {
+                    status.stringValue = "Finishing upload… — \(value.item.localURL.lastPathComponent)"
+                    return
+                }
                 status.stringValue = "\(action) file \(value.completedFiles + 1) — \(value.item.localURL.lastPathComponent) — \(count)"
             }, didDownload: { [weak self] item, bytes in
                 self?.downloads.record(filename: item.localURL.lastPathComponent, settings: settings, remotePath: item.remotePath, destination: item.localURL, byteCount: bytes)
             })
     }
-    private func startTransfer(_ items: [TransferItem], direction: TransferDirection, approvedDestination: URL? = nil) {
-        guard !busy, connected, !items.isEmpty, let settings = activeSettings else { return }
+    private func startTransfer(_ items: [TransferItem], direction: TransferDirection, approvedDestination: URL? = nil, reconnectIfNeeded: Bool = false) {
+        guard !busy, (connected || reconnectIfNeeded), !items.isEmpty, let settings = activeSettings else { return }
         applyFileConflict = nil
         let visibleFolder = directory?.path
         let expanded = expandedPaths
         runOperation(direction == .upload ? "Preparing upload…" : "Preparing download…") { [self] signal in
+            if reconnectIfNeeded, !(await browser.isConnected) {
+                status.stringValue = "Reconnecting…"
+                let result = try await browser.connect(settings, startingAt: visibleFolder, cancellation: signal)
+                connected = true
+                pendingShellDirectory = nil
+                connectionGeneration = UUID()
+                sshTerminal.setBrowserConnection(settings)
+                window?.title = "\(settings.host) — Retriever"
+                show(result)
+            }
             let summary = await performTransfer(items, direction: direction, settings: settings, signal: signal, approvedDestination: approvedDestination)
             if direction == .upload, !summary.cancelled, !summary.connectionLost, afterCleanup == nil, await browser.isConnected, let visibleFolder {
                 // Refresh errors must not turn successful publications into failures.
+                status.stringValue = "Refreshing folder after upload…"
                 if let result = try? await browser.directory(visibleFolder, cancellation: signal) {
                     show(result)
                     try? await restoreExpanded(expanded, selection: items.last?.remotePath, signal: signal)
@@ -832,11 +847,29 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         details += summary.failures.prefix(10).map { "\($0.item.localURL.lastPathComponent): \($0.error.localizedDescription)" }
         if summary.connectionLost { details.append("The connection was lost. Reconnect before starting another transfer.") }
         alert.informativeText = details.joined(separator: "\n")
-        alert.beginSheetModal(for: window) { [weak self] _ in
+        let retryItems = direction == .upload && !summary.cancelled
+            ? summary.failures.filter { !$0.item.isDirectory }.map(\.item) : []
+        alert.addButton(withTitle: "OK")
+        if !retryItems.isEmpty { alert.addButton(withTitle: "Retry Failed Uploads…") }
+        alert.beginSheetModal(for: window) { [weak self] result in
+            if result == .alertSecondButtonReturn { self?.confirmUploadRetry(retryItems) }
             self?.updateControls()
             self?.applyPendingShellDirectory()
         }
     }
+    private func confirmUploadRetry(_ items: [TransferItem]) {
+        guard !busy, let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Retry failed uploads from the beginning?"
+        alert.informativeText = "If the connection dropped while finishing, a file may already be complete on the server. Check the destination before retrying. Retriever will reconnect if needed and ask before replacing existing files. Partial temporary files are not resumed or removed by this retry."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Retry Uploads")
+        alert.beginSheetModal(for: window) { [weak self] result in
+            guard result == .alertSecondButtonReturn else { return }
+            self?.startTransfer(items, direction: .upload, reconnectIfNeeded: true)
+        }
+    }
+
     // Native file promises defer remote downloads until Finder accepts the drop.
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard !busy, connected, !showingTerminal, let settings = activeSettings, let node = item as? FileNode,

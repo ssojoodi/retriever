@@ -25,6 +25,7 @@ public final class SFTPSession {
     private var connected = false
     private var exchangeInFlight = false
     private var cleanupDeadline: TimeInterval?
+    private var finalizationDeadline: TimeInterval?
     public var isUsable: Bool { connected && !exchangeInFlight }
     var cancellation: SFTPCancellation
     private let idleTimeout: TimeInterval
@@ -251,13 +252,13 @@ public final class SFTPSession {
 
     /// Publish only after all writes and CLOSE succeed. Never unlink the destination.
     @discardableResult
-    public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, progress: (UInt64) -> Void = { _ in }) throws -> UInt64 {
+    public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, progress: (UInt64) -> Void = { _ in }, finishing: (UInt64) -> Void = { _ in }) throws -> UInt64 {
         let directory = try LocalTransferDirectory(url: source.deletingLastPathComponent())
-        return try upload(from: directory, name: source.lastPathComponent, to: path, policy: policy, progress: progress)
+        return try upload(from: directory, name: source.lastPathComponent, to: path, policy: policy, progress: progress, finishing: finishing)
     }
 
     @discardableResult
-    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, progress: (UInt64) -> Void = { _ in }) throws -> UInt64 {
+    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, progress: (UInt64) -> Void = { _ in }, finishing: (UInt64) -> Void = { _ in }) throws -> UInt64 {
         let descriptor = try directory.openFile(named: name)
         let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? file.close() }
@@ -302,6 +303,10 @@ public final class SFTPSession {
                   original.st_mtimespec.tv_nsec == final.st_mtimespec.tv_nsec,
                   original.st_ctimespec.tv_sec == final.st_ctimespec.tv_sec,
                   original.st_ctimespec.tv_nsec == final.st_ctimespec.tv_nsec else { throw SFTPError.uploadSourceChanged }
+            // Bound the whole CLOSE/check/RENAME sequence, even if replies trickle in.
+            finalizationDeadline = ProcessInfo.processInfo.systemUptime + idleTimeout
+            defer { finalizationDeadline = nil }
+            finishing(offset)
             // CLOSE invalidates the handle even if the server reports a flush error.
             let closing = handle!
             try cancellation.check()
@@ -433,6 +438,7 @@ public final class SFTPSession {
         while offset < bytes.count {
             try cancellation.check()
             if let cleanupDeadline, ProcessInfo.processInfo.systemUptime >= cleanupDeadline { throw SFTPError.timedOut }
+            if let finalizationDeadline, ProcessInfo.processInfo.systemUptime >= finalizationDeadline { throw SFTPError.timedOut }
             drainDiagnostics()
             guard ProcessInfo.processInfo.systemUptime - lastWrite < responseTimeout else { throw SFTPError.timedOut }
             var state = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
@@ -467,6 +473,7 @@ public final class SFTPSession {
         while result.count < count {
             try cancellation.check()
             if let cleanupDeadline, ProcessInfo.processInfo.systemUptime >= cleanupDeadline { throw SFTPError.timedOut }
+            if let finalizationDeadline, ProcessInfo.processInfo.systemUptime >= finalizationDeadline { throw SFTPError.timedOut }
             drainDiagnostics()
             guard ProcessInfo.processInfo.systemUptime - lastRead < responseTimeout else { throw SFTPError.timedOut }
             var descriptorState = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
