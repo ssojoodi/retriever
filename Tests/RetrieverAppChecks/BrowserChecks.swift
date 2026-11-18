@@ -615,16 +615,7 @@ struct BrowserChecks {
         }
         precondition(controller.busy)
         try capture(window)
-        // Composite the native view bitmap over the window background: layer-backed
-        // labels otherwise have transparent backgrounds in offscreen captures.
-        let captured = NSImage(contentsOfFile: "artifacts/verification/authenticated-browser-content.png")!
-        let rendered = NSImage(size: captured.size)
-        rendered.lockFocus()
-        NSColor.windowBackgroundColor.setFill()
-        NSRect(origin: .zero, size: captured.size).fill()
-        captured.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
-        rendered.unlockFocus()
-        try NSBitmapImageRep(data: rendered.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "artifacts/verification/upload-finishing-content.png"))
+        try captureRendered(window, filename: "upload-finishing-content.png")
         waitUntil("Finalized upload") { !controller.busy }
         precondition(window.attachedSheet == nil)
         let retrySource = root.appendingPathComponent("retry-upload.txt")
@@ -655,7 +646,70 @@ struct BrowserChecks {
         }
         let retriedBytes = try Data(contentsOf: root.appendingPathComponent("files/retry-upload.txt"))
         precondition(retriedBytes == Data("Retry fixture".utf8))
+        let resumeSource = root.appendingPathComponent("resume-upload.bin")
+        let resumeTarget = root.appendingPathComponent("files/resume-upload.bin")
+        let resumeBytes = Data((0..<131_123).map { UInt8(truncatingIfNeeded: $0) })
+        try resumeBytes.write(to: resumeSource)
+        try "drop-write".write(to: faultMode, atomically: true, encoding: .utf8)
+        controller.uploadFile(resumeSource)
+        waitUntil("Interrupted write") { !controller.busy && window.attachedSheet != nil }
+        try "delay-read".write(to: faultMode, atomically: true, encoding: .utf8)
+        press("Resume Upload")
+        waitUntil("Checking remote partial") {
+            descendants(window.contentView!).compactMap { $0 as? NSTextField }.contains { $0.stringValue.hasPrefix("Checking partial upload") }
+        }
+        try captureRendered(window, filename: "upload-resume-content.png")
+        waitUntil("Resumed upload") { !controller.busy && window.attachedSheet == nil && FileManager.default.fileExists(atPath: resumeTarget.path) }
+        let resumedBytes = try Data(contentsOf: resumeTarget)
+        precondition(resumedBytes == resumeBytes)
+
+        let outline = descendants(window.contentView!).compactMap { $0 as? NSOutlineView }.first!
+        let payloadRow = (0..<outline.numberOfRows).first {
+            (outline.view(atColumn: 0, row: $0, makeIfNecessary: true) as? NSTableCellView)?.textField?.stringValue == "payload.bin"
+        }!
+        outline.selectRowIndexes(IndexSet(integer: payloadRow), byExtendingSelection: false)
+        let cancelledDownload = root.appendingPathComponent("cancelled-download.bin")
+        try "delay-read".write(to: faultMode, atomically: true, encoding: .utf8)
+        controller.retrieveSelection(to: cancelledDownload)
+        waitUntil("Download waiting for response") { controller.busy && !FileManager.default.fileExists(atPath: faultMode.path) }
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        window.sendEvent(escape)
+        waitUntil("Escape cancels download") { !controller.busy }
+        precondition(window.attachedSheet == nil, "Cancellation must not block the file view with a sheet")
+        precondition(!FileManager.default.fileExists(atPath: cancelledDownload.path))
+        precondition(outline.isEnabled && window.firstResponder === outline)
+        outline.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        precondition(outline.selectedRow == 0)
+        let point = outline.convert(NSPoint(x: 50, y: outline.rect(ofRow: payloadRow).midY), to: nil)
+        let rightClick = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        let context = outline.menu(for: rightClick)
+        precondition(context != nil && outline.selectedRow == payloadRow)
+        let reconnect = context!.items.first { $0.title == "Reconnect" }!
+        precondition(controller.validateMenuItem(reconnect), "Interrupted protocol exchange must offer Reconnect")
+        try captureRendered(window, filename: "cancelled-download-content.png")
+        controller.reconnect(nil)
+        waitUntil("Reconnect after Escape") { !controller.busy }
+        precondition(window.attachedSheet == nil)
+        controller.refresh(nil)
+        waitUntil("Browse after cancelled download") { !controller.busy }
+        print("PASS: verified upload resume, Escape cancellation, interactive file view, context menu and reconnect")
         print("PASS: finishing upload status, lost close response, explicit reconnect and retry")
+    }
+
+    private static func captureRendered(_ window: NSWindow, filename: String) throws {
+        try capture(window)
+        // Composite the native view bitmap over the window background: layer-backed
+        // labels otherwise have transparent backgrounds in offscreen captures.
+        let captured = NSImage(contentsOfFile: "artifacts/verification/authenticated-browser-content.png")!
+        let rendered = NSImage(size: captured.size)
+        rendered.lockFocus()
+        NSColor.windowBackgroundColor.setFill()
+        NSRect(origin: .zero, size: captured.size).fill()
+        captured.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
+        rendered.unlockFocus()
+        try NSBitmapImageRep(data: rendered.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "artifacts/verification/" + filename))
     }
 
     private static func tryBytes(_ url: URL) -> Data { (try? Data(contentsOf: url)) ?? Data() }

@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Test-only SFTP proxy: delay/drop one upload CLOSE reply from a real SSH fixture."""
+"""Test-only SFTP proxy for delayed replies and interrupted transfers."""
 import pathlib
 import struct
 import subprocess
@@ -35,17 +35,26 @@ try:
         kind = request[4]
         if kind == 6:
             wrote = True
+        mode = marker.read_text() if marker.exists() else ''
+        late_write = False
+        if mode == 'drop-write-late' and kind == 6:
+            handle_length = struct.unpack('>I', request[9:13])[0]
+            offset = struct.unpack('>Q', request[13 + handle_length:21 + handle_length])[0]
+            late_write = offset >= 1_150_000_000
+        if (mode == 'drop-write' and kind == 6) or late_write or (mode == 'drop-rename' and kind in (18, 200)):
+            marker.unlink()
+            break
+        if mode == 'delay-read' and kind == 5:
+            marker.unlink()
+            time.sleep(2)
         if kind == 4 and wrote:
             wrote = False
-            if marker.exists():
-                mode = marker.read_text()
+            if mode in ('delay', 'drop'):
                 marker.unlink()
                 if mode == 'delay':
                     time.sleep(2)
-                elif mode == 'drop':
-                    break
                 else:
-                    raise ValueError(mode)
+                    break
         forward(response, sys.stdout.buffer)
 except (EOFError, BrokenPipeError):
     pass

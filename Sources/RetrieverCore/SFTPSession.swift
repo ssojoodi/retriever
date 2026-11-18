@@ -11,6 +11,35 @@ public enum UploadDestinationPolicy: Sendable {
     case replaceApproved
 }
 
+/// Opaque, session-only metadata for an upload created by Retriever.
+public struct UploadCheckpoint: Sendable {
+    let temporary: Data
+    let destination: Data
+    let source: UploadSourceIdentity
+    var publicationAttempted = false
+}
+
+struct UploadSourceIdentity: Equatable, Sendable {
+    let device: dev_t
+    let inode: ino_t
+    let size: off_t
+    let modifiedSeconds: Int
+    let modifiedNanoseconds: Int
+    let changedSeconds: Int
+    let changedNanoseconds: Int
+    init(_ value: stat) {
+        device = value.st_dev; inode = value.st_ino; size = value.st_size
+        modifiedSeconds = value.st_mtimespec.tv_sec; modifiedNanoseconds = value.st_mtimespec.tv_nsec
+        changedSeconds = value.st_ctimespec.tv_sec; changedNanoseconds = value.st_ctimespec.tv_nsec
+    }
+}
+
+struct PartialUploadError: LocalizedError {
+    let checkpoint: UploadCheckpoint
+    let message: String
+    var errorDescription: String? { message }
+}
+
 /// A synchronous session. Own and call it on a dedicated serial worker, never the UI thread.
 /// SSH owns encryption, authentication and host-key verification.
 public final class SFTPSession {
@@ -258,33 +287,59 @@ public final class SFTPSession {
     }
 
     @discardableResult
-    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, progress: (UInt64) -> Void = { _ in }, finishing: (UInt64) -> Void = { _ in }) throws -> UInt64 {
+    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, progress: (UInt64) -> Void = { _ in }, finishing: (UInt64) -> Void = { _ in }, resuming: UploadCheckpoint? = nil, retainForResume: Bool = false, verifying: (UInt64) -> Void = { _ in }) throws -> UInt64 {
         let descriptor = try directory.openFile(named: name)
         let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? file.close() }
         var original = stat()
         guard fstat(descriptor, &original) == 0 else { throw POSIXError(.EIO) }
         guard original.st_mode & S_IFMT == S_IFREG else { throw SFTPError.invalidUploadFile }
-        try uploadTarget(path, policy: policy)
+        let identity = UploadSourceIdentity(original)
         guard let slash = path.lastIndex(of: 47) else { throw SFTPError.invalidUploadFile }
-        let temporary = Self.appending(Data(".retriever-\(UUID().uuidString).partial".utf8), to: Data(path.prefix(through: slash)))
+        if let resuming {
+            guard resuming.destination == path, resuming.source == identity else { throw SFTPError.uploadSourceChanged }
+        } else {
+            try uploadTarget(path, policy: policy)
+        }
+        let temporary = resuming?.temporary ?? Self.appending(Data(".retriever-\(UUID().uuidString).partial".utf8), to: Data(path.prefix(through: slash)))
+        var checkpoint = resuming ?? UploadCheckpoint(temporary: temporary, destination: path, source: identity)
         var handle: Data?
         var created = false
         var opening = false
         var publishing = false
         do {
-            var open = SFTPWriter()
-            open.bytes(temporary)
-            open.uint32(2 | 8 | 32) // WRITE | CREAT | EXCL
-            open.uint32(4) // permissions: private until published, and thereafter.
-            open.uint32(0o600)
-            opening = true
-            var response = try request(3, payload: open, expecting: 102)
-            created = true
-            handle = try response.bytes()
-            guard response.remaining == 0 else { throw SFTPError.malformedPacket }
-            opening = false
             var offset: UInt64 = 0
+            if resuming != nil {
+                guard let partial = try attributes(at: temporary) else {
+                    guard checkpoint.publicationAttempted, let final = try attributes(at: path),
+                          final.size == UInt64(original.st_size) else { throw SFTPError.uploadResumeUnavailable }
+                    let completedHandle = try openResumeFile(path, attributes: final, writable: false)
+                    defer { finishHandle(completedHandle) }
+                    try verifyUploadPrefix(completedHandle, file: file, size: UInt64(original.st_size), verifying: verifying)
+                    try validateUploadSource(descriptor, identity: identity)
+                    return UInt64(original.st_size)
+                }
+                guard let size = partial.size, size <= UInt64(original.st_size) else { throw SFTPError.uploadResumeMismatch }
+                handle = try openResumeFile(temporary, attributes: partial, writable: true)
+                verifying(0)
+                try verifyUploadPrefix(handle!, file: file, size: size, verifying: verifying)
+                try validateUploadSource(descriptor, identity: identity)
+                try uploadTarget(path, policy: policy)
+                offset = size
+                progress(offset)
+            } else {
+                var open = SFTPWriter()
+                open.bytes(temporary)
+                open.uint32(2 | 8 | 32) // WRITE | CREAT | EXCL
+                open.uint32(4) // permissions: private until published, and thereafter.
+                open.uint32(0o600)
+                opening = true
+                var response = try request(3, payload: open, expecting: 102)
+                created = true
+                handle = try response.bytes()
+                guard response.remaining == 0 else { throw SFTPError.malformedPacket }
+                opening = false
+            }
             while true {
                 try cancellation.check()
                 guard let bytes = try file.read(upToCount: 32768), !bytes.isEmpty else { break }
@@ -307,6 +362,7 @@ public final class SFTPSession {
             finalizationDeadline = ProcessInfo.processInfo.systemUptime + idleTimeout
             defer { finalizationDeadline = nil }
             finishing(offset)
+            if resuming != nil, try handleAttributes(handle!).size != offset { throw SFTPError.uploadResumeMismatch }
             // CLOSE invalidates the handle even if the server reports a flush error.
             let closing = handle!
             try cancellation.check()
@@ -318,12 +374,16 @@ public final class SFTPSession {
             rename.bytes(temporary)
             rename.bytes(path)
             publishing = true
+            checkpoint.publicationAttempted = true
             _ = try request(policy == .replaceApproved ? 200 : 18, payload: rename, expecting: 101)
             return offset
         } catch {
             let uncertainPublication = publishing && exchangeInFlight
             let uncertainCreation = opening && exchangeInFlight
             handleFailure(error)
+            // A resumed partial belongs to a prior attempt. Never delete it on
+            // verification/conflict failure or cancellation while checking it.
+            if resuming != nil, let handle, isUsable { finishHandle(handle) }
             if created, isUsable {
                 let originalCancellation = cancellation
                 cancellation = SFTPCancellation()
@@ -339,10 +399,69 @@ public final class SFTPSession {
             }
             if created || uncertainCreation {
                 let outcome = uncertainPublication ? "The server may have completed the upload. Check the destination before retrying." : "The upload did not complete."
-                throw SFTPError.uploadIncomplete("\(error.localizedDescription)\n\n\(outcome) A temporary file may remain at:\n\(String(decoding: temporary, as: UTF8.self))")
+                let message = "\(error.localizedDescription)\n\n\(outcome) A temporary file may remain at:\n\(String(decoding: temporary, as: UTF8.self))"
+                if retainForResume, !isUsable, !opening, !(error is CancellationError) {
+                    throw PartialUploadError(checkpoint: checkpoint, message: message)
+                }
+                throw SFTPError.uploadIncomplete(message)
+            }
+            if resuming != nil, !isUsable, !(error is CancellationError) {
+                throw PartialUploadError(checkpoint: checkpoint, message: error.localizedDescription)
             }
             throw error
         }
+    }
+
+    private func validateUploadSource(_ descriptor: Int32, identity: UploadSourceIdentity) throws {
+        var current = stat()
+        guard fstat(descriptor, &current) == 0, UploadSourceIdentity(current) == identity else { throw SFTPError.uploadSourceChanged }
+    }
+
+    private func handleAttributes(_ handle: Data) throws -> RemoteAttributes {
+        var payload = SFTPWriter()
+        payload.bytes(handle)
+        var response = try request(8, payload: payload, expecting: 105)
+        let attributes = try response.attributes()
+        guard response.remaining == 0 else { throw SFTPError.malformedPacket }
+        return attributes
+    }
+
+    private func openResumeFile(_ path: Data, attributes: RemoteAttributes, writable: Bool) throws -> Data {
+        guard attributes.permissions.map({ $0 & 0xF000 == 0x8000 }) == true else { throw SFTPError.uploadResumeMismatch }
+        var open = SFTPWriter()
+        open.bytes(path)
+        open.uint32(writable ? 3 : 1) // READ (+ WRITE); never CREATE or TRUNCATE.
+        open.uint32(0)
+        var response = try request(3, payload: open, expecting: 102)
+        let handle = try response.bytes()
+        do {
+            guard response.remaining == 0 else { throw SFTPError.malformedPacket }
+            let actual = try handleAttributes(handle)
+            guard actual.permissions.map({ $0 & 0xF000 == 0x8000 }) == true,
+                  actual.size == attributes.size else { throw SFTPError.uploadResumeMismatch }
+            return handle
+        } catch { finishHandle(handle); throw error }
+    }
+
+    private func verifyUploadPrefix(_ handle: Data, file: FileHandle, size: UInt64, verifying: (UInt64) -> Void) throws {
+        let before = try handleAttributes(handle)
+        guard before.size == size else { throw SFTPError.uploadResumeMismatch }
+        try file.seek(toOffset: 0)
+        var offset: UInt64 = 0
+        while offset < size {
+            try cancellation.check()
+            var read = SFTPWriter()
+            read.bytes(handle); read.uint64(offset)
+            let count = UInt32(min(32768, size - offset))
+            read.uint32(count)
+            var response = try request(5, payload: read, expecting: 103)
+            let remote = try response.bytes()
+            guard !remote.isEmpty, remote.count <= count, response.remaining == 0 else { throw SFTPError.malformedPacket }
+            guard try file.read(upToCount: remote.count) == remote else { throw SFTPError.uploadResumeMismatch }
+            offset += UInt64(remote.count)
+            verifying(offset)
+        }
+        guard try handleAttributes(handle) == before else { throw SFTPError.uploadResumeMismatch }
     }
 
     // Cancellation before a new exchange can preserve the stream. Never send a
