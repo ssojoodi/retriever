@@ -32,7 +32,7 @@ def main():
     # Unique staging prevents collision with another release or mounted image.
     root = Path(tempfile.mkdtemp(prefix='layout-', dir=work))
     contents = root / 'contents'
-    background = contents / '.background/background.png'
+    background = contents / '.background/background.tiff'
     background.parent.mkdir(parents=True)
     cache = repo / '.build/ModuleCache'
     cache.mkdir(parents=True, exist_ok=True)

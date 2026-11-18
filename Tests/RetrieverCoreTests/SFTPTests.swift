@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import RetrieverCore
 
 final class SFTPTests: XCTestCase {
@@ -477,7 +478,7 @@ final class SFTPTests: XCTestCase {
         try Data("contents".utf8).write(to: source)
         // A small protocol peer drops a chosen reply. It never touches the filesystem.
         let peer = #"""
-        import sys, struct
+        import sys, struct, time
         mode = sys.argv[1]
         def integer(n): return struct.pack('>I', n)
         def string(b): return integer(len(b)) + b
@@ -497,6 +498,13 @@ final class SFTPTests: XCTestCase {
                 send(bytes([105]) + request + integer(4) + integer(0o100600))
                 continue
             if str(kind) == mode: sys.exit(0)
+            if mode == 'stall-' + str(kind): time.sleep(10)
+            if mode == 'trickle-' + str(kind):
+                reply = string(bytes([101]) + request + integer(0) + string(b'') + string(b''))
+                for byte in reply:
+                    sys.stdout.buffer.write(bytes([byte])); sys.stdout.buffer.flush()
+                    time.sleep(0.1)
+                continue
             if kind == 7:
                 send(bytes([101]) + request + integer(2) + string(b'missing') + string(b''))
             elif kind == 3:
@@ -505,21 +513,232 @@ final class SFTPTests: XCTestCase {
                 send(bytes([101]) + request + integer(0) + string(b'') + string(b''))
             else: raise AssertionError(kind)
         """#
-        for mode in ["unsupported", "3", "6", "18"] {
-            let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: ["-c", peer, mode])
+        for mode in ["unsupported", "3", "6", "4", "18", "stall-4", "stall-18", "trickle-4", "trickle-18"] {
+            // Drop CLOSE/RENAME replies after acknowledging all 1.2 GB of writes.
+            let size: UInt64 = ["4", "18"].contains(mode) ? 1_200_000_000 : 8
+            let file = try FileHandle(forWritingTo: source)
+            try file.truncate(atOffset: size)
+            try file.close()
+            let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: ["-c", peer, mode], idleTimeout: 0.5)
             defer { session.disconnect() }
-            XCTAssertThrowsError(try session.upload(source, to: Data("/remote/file".utf8), policy: mode == "unsupported" ? .replaceApproved : .exclusive)) { error in
+            var finishingBytes: UInt64?
+            var finalizingAt: TimeInterval?
+            XCTAssertThrowsError(try session.upload(source, to: Data("/remote/file".utf8), policy: mode == "unsupported" ? .replaceApproved : .exclusive, finishing: { finishingBytes = $0; finalizingAt = ProcessInfo.processInfo.systemUptime })) { error in
                 if mode == "unsupported" {
                     XCTAssertEqual(error as? SFTPError, .uploadReplacementUnsupported)
                     XCTAssertTrue(session.isUsable)
                 } else {
                     guard case SFTPError.uploadIncomplete(let message) = error else { return XCTFail("Expected remote cleanup warning: \(error)") }
                     XCTAssertTrue(message.contains(".partial"))
-                    XCTAssertEqual(message.contains("may have completed"), mode == "18")
+                    XCTAssertEqual(message.contains("may have completed"), mode.hasSuffix("18"))
                     XCTAssertFalse(session.isUsable)
                 }
             }
+            if let finalizingAt {
+                XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - finalizingAt, 3)
+                XCTAssertEqual(finishingBytes, size)
+            }
+            XCTAssertEqual(finishingBytes != nil, mode.hasSuffix("4") || mode.hasSuffix("18"))
         }
+    }
+
+    func testLargeUploadFinalizesBeforeSuccess() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let source = fixture.appendingPathComponent("large-source")
+        let destination = fixture.appendingPathComponent("large-destination")
+        FileManager.default.createFile(atPath: source.path, contents: Data("start".utf8))
+        let file = try FileHandle(forWritingTo: source)
+        let size: UInt64 = 1_200_000_000
+        try file.truncate(atOffset: size)
+        try file.seek(toOffset: size - 4)
+        try file.write(contentsOf: Data("end!".utf8))
+        try file.close()
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { session.disconnect() }
+        var finalizations = 0
+        var lastBytes: UInt64 = 0
+        let total = try session.upload(source, to: Data(destination.path.utf8), progress: { lastBytes = $0 }, finishing: { bytes in
+            finalizations += 1
+            XCTAssertEqual(bytes, size)
+            XCTAssertEqual(lastBytes, size)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        })
+        XCTAssertEqual(total, size)
+        XCTAssertEqual(finalizations, 1)
+        func digest(_ url: URL) throws -> SHA256.Digest {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            var hash = SHA256()
+            while let bytes = try handle.read(upToCount: 1_048_576), !bytes.isEmpty { hash.update(data: bytes) }
+            return hash.finalize()
+        }
+        XCTAssertEqual(try digest(source), try digest(destination))
+        XCTAssertTrue(session.isUsable)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: fixture.path).contains { $0.hasSuffix(".partial") })
+    }
+
+    func testCancelWhileFinishingUploadPreservesDestination() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let source = fixture.appendingPathComponent("source")
+        let target = fixture.appendingPathComponent("target")
+        try Data("new".utf8).write(to: source)
+        try Data("old".utf8).write(to: target)
+        let signal = SFTPCancellation()
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [], cancellation: signal)
+        defer { session.disconnect() }
+        XCTAssertThrowsError(try session.upload(source, to: Data(target.path.utf8), policy: .replaceApproved, finishing: { _ in signal.cancel() })) {
+            XCTAssertTrue($0 is CancellationError)
+        }
+        XCTAssertEqual(try Data(contentsOf: target), Data("old".utf8))
+        XCTAssertTrue(session.isUsable)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: fixture.path).contains { $0.hasSuffix(".partial") })
+    }
+
+    private func interruptedFixture(_ mode: String = "drop-write", size: UInt64 = 131_123) throws -> (URL, URL, URL, UploadCheckpoint) {
+        let root = try makeFixture()
+        let source = root.appendingPathComponent("source")
+        let target = root.appendingPathComponent("target")
+        try Data((0..<131_123).map { UInt8(truncatingIfNeeded: $0) }).write(to: source)
+        let sourceHandle = try FileHandle(forWritingTo: source)
+        try sourceHandle.truncate(atOffset: size)
+        try sourceHandle.close()
+        let marker = root.appendingPathComponent("fault")
+        try mode.write(to: marker, atomically: true, encoding: .utf8)
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: [repo.appendingPathComponent("scripts/upload_fault_proxy.py").path, marker.path, "/usr/libexec/sftp-server"])
+        defer { session.disconnect() }
+        let directory = try LocalTransferDirectory(url: root)
+        do {
+            try session.upload(from: directory, name: "source", to: Data(target.path.utf8), retainForResume: true)
+            XCTFail("Expected interrupted upload")
+            throw SFTPError.disconnected
+        } catch let failure as PartialUploadError {
+            XCTAssertFalse(session.isUsable)
+            return (root, source, target, failure.checkpoint)
+        }
+    }
+
+    func testResumeVerifiesUnacknowledgedPrefixAndSendsOnlyRemainder() throws {
+        let (root, source, target, checkpoint) = try interruptedFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { session.disconnect() }
+        var uploaded: [UInt64] = []
+        var verified: UInt64 = 0
+        let count = try session.upload(from: LocalTransferDirectory(url: root), name: "source", to: Data(target.path.utf8), progress: { uploaded.append($0) }, resuming: checkpoint, retainForResume: true, verifying: { verified = $0 })
+        XCTAssertEqual(verified, 32768)
+        XCTAssertEqual(uploaded.first, 32768)
+        XCTAssertEqual(count, 131_123)
+        XCTAssertEqual(try Data(contentsOf: source), try Data(contentsOf: target))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: String(decoding: checkpoint.temporary, as: UTF8.self)))
+    }
+
+    func testResumeLargeUploadNearCompletion() throws {
+        let (root, source, target, checkpoint) = try interruptedFixture("drop-write-late", size: 1_200_000_000)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { session.disconnect() }
+        var firstOffset: UInt64?
+        var verified: UInt64 = 0
+        let count = try session.upload(from: LocalTransferDirectory(url: root), name: "source", to: Data(target.path.utf8), progress: { if firstOffset == nil { firstOffset = $0 } }, resuming: checkpoint, verifying: { verified = $0 })
+        XCTAssertEqual(count, 1_200_000_000)
+        XCTAssertEqual(firstOffset, verified)
+        XCTAssertGreaterThan(verified, 1_150_000_000)
+        func digest(_ url: URL) throws -> SHA256.Digest {
+            let file = try FileHandle(forReadingFrom: url)
+            defer { try? file.close() }
+            var hash = SHA256()
+            while let bytes = try file.read(upToCount: 1_048_576), !bytes.isEmpty { hash.update(data: bytes) }
+            return hash.finalize()
+        }
+        XCTAssertEqual(try digest(source), try digest(target))
+    }
+
+    func testResumeRecognizesAlreadyPublishedUpload() throws {
+        let (root, source, target, checkpoint) = try interruptedFixture("drop-rename")
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertTrue(checkpoint.publicationAttempted)
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { session.disconnect() }
+        var verified: UInt64 = 0
+        let count = try session.upload(from: LocalTransferDirectory(url: root), name: "source", to: Data(target.path.utf8), progress: { _ in XCTFail("An already completed upload must not be written again") }, resuming: checkpoint, verifying: { verified = $0 })
+        XCTAssertEqual(count, verified)
+        XCTAssertEqual(try Data(contentsOf: source), try Data(contentsOf: target))
+    }
+
+    func testResumeRejectsChangedSourceAndUnsafePartialsWithoutWriting() throws {
+        for mode in ["source", "prefix", "symlink", "oversize", "missing"] {
+            let (root, source, target, checkpoint) = try interruptedFixture()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let partial = URL(fileURLWithPath: String(decoding: checkpoint.temporary, as: UTF8.self))
+            switch mode {
+            case "source": try Data("changed".utf8).write(to: source)
+            case "prefix": try Data(repeating: 255, count: 32768).write(to: partial)
+            case "symlink":
+                try FileManager.default.removeItem(at: partial)
+                try FileManager.default.createSymbolicLink(at: partial, withDestinationURL: source)
+            case "oversize": try Data(repeating: 1, count: 200_000).write(to: partial)
+            default: try FileManager.default.removeItem(at: partial)
+            }
+            let before = try? Data(contentsOf: partial)
+            let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+            defer { session.disconnect() }
+            XCTAssertThrowsError(try session.upload(from: LocalTransferDirectory(url: root), name: "source", to: Data(target.path.utf8), resuming: checkpoint))
+            XCTAssertEqual(try? Data(contentsOf: partial), before)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+            XCTAssertTrue(session.isUsable)
+        }
+    }
+
+    func testResumeRequiresFreshReplacementApprovalAndCanCancelVerification() throws {
+        let (root, source, target, checkpoint) = try interruptedFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let partial = URL(fileURLWithPath: String(decoding: checkpoint.temporary, as: UTF8.self))
+        let before = try Data(contentsOf: partial)
+        try Data("existing destination".utf8).write(to: target)
+        let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { session.disconnect() }
+        let directory = try LocalTransferDirectory(url: root)
+        XCTAssertThrowsError(try session.upload(from: directory, name: "source", to: Data(target.path.utf8), resuming: checkpoint)) { XCTAssertEqual($0 as? SFTPError, .uploadDestinationExists) }
+        XCTAssertEqual(try Data(contentsOf: partial), before)
+        let signal = SFTPCancellation()
+        session.cancellation = signal
+        XCTAssertThrowsError(try session.upload(from: directory, name: "source", to: Data(target.path.utf8), policy: .replaceApproved, resuming: checkpoint, verifying: { _ in signal.cancel() })) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertTrue(session.isUsable)
+        XCTAssertEqual(try Data(contentsOf: partial), before)
+        XCTAssertEqual(try Data(contentsOf: target), Data("existing destination".utf8))
+        session.cancellation = SFTPCancellation()
+        try session.upload(from: directory, name: "source", to: Data(target.path.utf8), policy: .replaceApproved, resuming: checkpoint)
+        XCTAssertEqual(try Data(contentsOf: target), try Data(contentsOf: source))
+    }
+
+    func testBrowserBindsResumeToConnectionAndRetainsItAcrossReconnect() async throws {
+        let root = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source")
+        let target = root.appendingPathComponent("target")
+        try Data(repeating: 42, count: 100_000).write(to: source)
+        let marker = root.appendingPathComponent("fault")
+        try "drop-write".write(to: marker, atomically: true, encoding: .utf8)
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let browser = SFTPBrowser(initialPath: Data(root.path.utf8)) { _, signal in
+            try SFTPSession(executable: URL(fileURLWithPath: "/usr/bin/python3"), arguments: [repo.appendingPathComponent("scripts/upload_fault_proxy.py").path, marker.path, "/usr/libexec/sftp-server"], cancellation: signal)
+        }
+        let settings = try ConnectionSettings(host: "fixture", username: "first", port: "22")
+        _ = try await browser.connect(settings, cancellation: SFTPCancellation())
+        var interrupted: InterruptedUpload?
+        do { try await browser.upload(source, to: Data(target.path.utf8), cancellation: SFTPCancellation()); XCTFail("Expected interruption") }
+        catch let failure as InterruptedUpload { interrupted = failure }
+        let failure = try XCTUnwrap(interrupted)
+        _ = try await browser.connect(ConnectionSettings(host: "fixture", username: "other", port: "22"), cancellation: SFTPCancellation())
+        do { try await browser.resumeUpload(failure, cancellation: SFTPCancellation()); XCTFail("Must reject a different account") }
+        catch { XCTAssertEqual(error as? SFTPError, .uploadResumeUnavailable) }
+        _ = try await browser.connect(settings, cancellation: SFTPCancellation())
+        try await browser.resumeUpload(failure, cancellation: SFTPCancellation())
+        XCTAssertEqual(try Data(contentsOf: source), try Data(contentsOf: target))
+        await browser.disconnect()
     }
 
     func testRemoteDirectoryOperationsAndNonFollowingAttributes() async throws {

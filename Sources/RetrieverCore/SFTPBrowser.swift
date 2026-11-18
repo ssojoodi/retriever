@@ -7,6 +7,7 @@ public final class SFTPCancellation: @unchecked Sendable {
     private var cancelled = false
     public init() {}
     public func cancel() { lock.withLock { cancelled = true } }
+    public var isCancelled: Bool { lock.withLock { cancelled } }
     public func check() throws { if lock.withLock({ cancelled }) { throw CancellationError() } }
 }
 
@@ -30,10 +31,21 @@ public struct RemoteDirectory: Sendable {
     }
 }
 
+/// Resume data is held only in memory; it never contains credentials.
+public struct InterruptedUpload: LocalizedError, Sendable {
+    public let settings: ConnectionSettings
+    public let source: URL
+    public var destination: Data { checkpoint.destination }
+    let checkpoint: UploadCheckpoint
+    let message: String
+    public var errorDescription: String? { message }
+}
+
 public actor SFTPBrowser {
     private nonisolated let executor = SFTPExecutor()
     public nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
     private var session: SFTPSession?
+    private var sessionSettings: ConnectionSettings?
     private let makeSession: @Sendable (ConnectionSettings, SFTPCancellation) throws -> SFTPSession
     private let initialPath: Data
     public init(askpass: URL? = nil) {
@@ -54,6 +66,7 @@ public actor SFTPBrowser {
         do {
             let connection = try makeSession(settings, cancellation)
             session = connection
+            sessionSettings = settings
             if let path, !path.isEmpty {
                 do {
                     let canonical = try connection.canonicalPath(path)
@@ -136,29 +149,63 @@ public actor SFTPBrowser {
     }
 
     @discardableResult
-    public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+    public func upload(_ source: URL, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }, finishing: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
         guard session != nil else { throw SFTPError.disconnected }
         let directory = try LocalTransferDirectory(url: source.deletingLastPathComponent())
-        return try upload(from: directory, name: source.lastPathComponent, to: path, policy: policy, cancellation: cancellation, progress: progress)
+        return try upload(from: directory, name: source.lastPathComponent, to: path, policy: policy, cancellation: cancellation, progress: progress, finishing: finishing)
     }
 
     @discardableResult
-    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
-        guard let session else { throw SFTPError.disconnected }
+    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }, finishing: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+        guard let session, let settings = sessionSettings else { throw SFTPError.disconnected }
         session.cancellation = cancellation
         do {
             var lastUpdate: TimeInterval = 0
-            let total = try session.upload(from: directory, name: name, to: path, policy: policy) { bytes in
+            let total = try session.upload(from: directory, name: name, to: path, policy: policy, progress: { bytes in
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastUpdate >= 0.1 { progress(bytes); lastUpdate = now }
-            }
+            }, finishing: finishing, retainForResume: true)
             progress(total)
             return total
-        } catch { handleFailure(error); throw error }
+        } catch {
+            handleFailure(error)
+            if let partial = error as? PartialUploadError {
+                throw InterruptedUpload(settings: settings, source: directory.url.appendingPathComponent(name), checkpoint: partial.checkpoint, message: partial.message)
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func resumeUpload(_ upload: InterruptedUpload, policy: UploadDestinationPolicy = .exclusive,
+                             cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in },
+                             verifying: @Sendable (UInt64) -> Void = { _ in }, finishing: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+        guard let session, sessionSettings == upload.settings else { throw SFTPError.uploadResumeUnavailable }
+        session.cancellation = cancellation
+        let directory = try LocalTransferDirectory(url: upload.source.deletingLastPathComponent())
+        do {
+            var lastProgress: TimeInterval = 0
+            var lastVerification: TimeInterval = 0
+            return try session.upload(from: directory, name: upload.source.lastPathComponent, to: upload.destination, policy: policy,
+                progress: { bytes in
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if now - lastProgress >= 0.1 { progress(bytes); lastProgress = now }
+                }, finishing: finishing, resuming: upload.checkpoint, retainForResume: true, verifying: { bytes in
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if now - lastVerification >= 0.1 { verifying(bytes); lastVerification = now }
+                })
+        } catch {
+            handleFailure(error)
+            if let partial = error as? PartialUploadError {
+                throw InterruptedUpload(settings: upload.settings, source: upload.source, checkpoint: partial.checkpoint, message: partial.message)
+            }
+            throw error
+        }
     }
 
     public func disconnect() {
         session?.disconnect()
         session = nil
+        sessionSettings = nil
     }
 }

@@ -1,18 +1,20 @@
 import AppKit
 
-// Finder window: 660 × 400. Icons: (169, 198) and (491, 198).
+// Finder window: 660 × 400, including the title bar. Icons: (169, 198) and (491, 198).
 // AppKit artwork coordinates start at the bottom-left.
-guard CommandLine.arguments.count == 2 else { fatalError("Pass an output PNG path") }
-let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 660, pixelsHigh: 400,
+guard CommandLine.arguments.count == 2 else { fatalError("Pass an output TIFF path") }
+let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1320, pixelsHigh: 736,
     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+NSGraphicsContext.current!.cgContext.scaleBy(x: 2, y: 2)
+NSGraphicsContext.current!.cgContext.translateBy(x: 0, y: -32)
 let ink = NSColor(srgbRed: 0.25, green: 0.20, blue: 0.13, alpha: 1)
 let accent = NSColor(srgbRed: 0.72, green: 0.40, blue: 0.08, alpha: 1)
 NSGradient(starting: NSColor(srgbRed: 1, green: 0.98, blue: 0.93, alpha: 1),
            ending: NSColor(srgbRed: 0.98, green: 0.88, blue: 0.66, alpha: 1))!
-    .draw(in: NSRect(x: 0, y: 0, width: 660, height: 400), angle: -90)
+    .draw(in: NSRect(x: 0, y: 32, width: 660, height: 368), angle: -90)
 func text(_ value: String, y: CGFloat, size: CGFloat, weight: NSFont.Weight, color: NSColor) {
     let paragraph = NSMutableParagraphStyle()
     paragraph.alignment = .center
@@ -43,4 +45,5 @@ text("Then open Retriever from your Applications folder.", y: 50, size: 13, weig
 NSGraphicsContext.restoreGraphicsState()
 let output = URL(fileURLWithPath: CommandLine.arguments[1])
 try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-try bitmap.representation(using: .png, properties: [:])!.write(to: output)
+bitmap.size = NSSize(width: 660, height: 368)
+try bitmap.representation(using: .tiff, properties: [.compressionMethod: NSBitmapImageRep.TIFFCompression.lzw.rawValue])!.write(to: output)

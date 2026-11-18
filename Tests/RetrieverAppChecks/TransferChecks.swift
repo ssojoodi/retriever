@@ -56,7 +56,7 @@ private final class FixtureTransfers: TransferClient {
         progress(UInt64(data.count))
         return UInt64(data.count)
     }
-    func upload(directory: LocalTransferDirectory, name: String, path: Data, policy: UploadDestinationPolicy, cancellation: SFTPCancellation, progress: @escaping @Sendable (UInt64) -> Void) async throws -> UInt64 {
+    func upload(directory: LocalTransferDirectory, name: String, path: Data, policy: UploadDestinationPolicy, cancellation: SFTPCancellation, finishing: @escaping @Sendable (UInt64) -> Void, progress: @escaping @Sendable (UInt64) -> Void) async throws -> UInt64 {
         try cancellation.check()
         operations.append("upload " + String(decoding: path, as: UTF8.self))
         try checkFailure(path)
