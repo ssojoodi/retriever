@@ -14,13 +14,16 @@ on run argv
         set arrangement of viewOptions to not arranged
         set icon size of viewOptions to 104
         set text size of viewOptions to 13
-        set background picture of viewOptions to file ".background:background.png" of volumeFolder
+        set background picture of viewOptions to file ".background:background.tiff" of volumeFolder
         set position of item appName of volumeFolder to {169, 198}
         set position of item "Applications" of volumeFolder to {491, 198}
+        -- Keep hidden items below the artwork when Finder shows hidden files.
+        set hiddenX to 169
         repeat with hiddenName in {".background", ".fseventsd", ".DS_Store"}
-            try
-                set position of item (hiddenName as text) of volumeFolder to {1200, 1200}
-            end try
+            if exists item (hiddenName as text) of volumeFolder then
+                set position of item (hiddenName as text) of volumeFolder to {hiddenX, 500}
+                set hiddenX to hiddenX + 161
+            end if
         end repeat
         update volumeFolder without registering applications
         delay 2
