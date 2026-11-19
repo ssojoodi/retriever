@@ -88,7 +88,7 @@ def main():
     derived = release_root / 'DerivedData'
     run('xcrun', 'xcodebuild', '-project', 'Retriever.xcodeproj', '-scheme', 'Retriever',
         '-configuration', 'Release', '-destination', 'generic/platform=macOS', '-derivedDataPath', derived,
-        'CODE_SIGNING_ALLOWED=NO', 'SWIFT_OPTIMIZATION_LEVEL=-Osize', 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=NO', 'build')
+        'CODE_SIGNING_ALLOWED=NO', 'SWIFT_OPTIMIZATION_LEVEL=-Osize', 'ENABLE_CODE_COVERAGE=NO', 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=NO', 'build')
     # Keep the reusable build cache unsigned; sign an isolated copy for this run.
     app = staging / 'Retriever.app'
     run('ditto', derived / 'Build/Products/Release/Retriever.app', app)

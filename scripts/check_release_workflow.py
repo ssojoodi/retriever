@@ -30,6 +30,7 @@ with tempfile.TemporaryDirectory() as temporary:
             assert args[args.index('-derivedDataPath') + 1] == str(repo / '.build/release/DerivedData')
             assert 'ARCHS=arm64' in args
             assert 'SWIFT_OPTIMIZATION_LEVEL=-Osize' in args
+            assert 'ENABLE_CODE_COVERAGE=NO' in args
         elif args[0] == 'ditto' and args[2].endswith('.app'):
             app = Path(args[2])
             (app / 'Contents').mkdir(parents=True)

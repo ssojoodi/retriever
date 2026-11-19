@@ -60,6 +60,8 @@ make build-release
 
 This builds and verifies arm64 binaries, optimizes for size, and strips release symbols. Signing and notarization happen in the separate release step.
 
+Both release commands disable coverage across the full build, including SwiftTerm. For a custom Release invocation, pass `ENABLE_CODE_COVERAGE=NO` to `xcodebuild` so the package target receives the same setting.
+
 ## How it works
 
 Retriever keeps the interface, connection logic, and SSH transport separate:
