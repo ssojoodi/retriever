@@ -6,7 +6,7 @@ DESTINATION ?= platform=macOS
 DERIVED_DATA ?= .build/DerivedData
 RELEASE_DERIVED_DATA ?= .build/ReleaseVerification
 APP = $(DERIVED_DATA)/Build/Products/$(CONFIGURATION)/Retriever.app
-RELEASE_FLAGS = SWIFT_OPTIMIZATION_LEVEL=-Osize
+RELEASE_FLAGS = SWIFT_OPTIMIZATION_LEVEL=-Osize ENABLE_CODE_COVERAGE=NO
 XCODE_FLAGS ?=
 XCODE = xcrun xcodebuild $(XCODE_FLAGS) $(if $(filter Release,$(CONFIGURATION)),$(RELEASE_FLAGS)) -project "$(PROJECT)" -scheme "$(SCHEME)" -configuration "$(CONFIGURATION)" -destination "$(DESTINATION)" -derivedDataPath "$(DERIVED_DATA)" CODE_SIGNING_ALLOWED=NO
 -include release.env

@@ -95,7 +95,7 @@ struct BrowserChecks {
         let blankEvent = NSEvent.mouseEvent(with: .rightMouseDown, location: blankLocation, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
         precondition(table.menu(for: blankEvent) == nil, "Empty space must not act on the prior selection")
         let folderMenu = contextMenu(row: 0)!
-        precondition(folderMenu.items.map(\.title) == ["Download", "Preview", "", "SSH into Folder"])
+        precondition(folderMenu.items.map(\.title) == ["Download", "Preview", "Reconnect", "", "SSH into Folder"])
         precondition(folderMenu.items[0].isEnabled && !folderMenu.items[1].isEnabled, "Folders support download but not preview")
         precondition(folderMenu.items.last!.isEnabled, "Folders support SSH")
         precondition(table.allowsMultipleSelection)
@@ -109,7 +109,7 @@ struct BrowserChecks {
         _ = contextMenu(row: 3)
         precondition(table.selectedRowIndexes == IndexSet(integer: 3), "Right-click outside selection must select the pointed item")
         let fileMenu = contextMenu(row: 2)!
-        precondition(table.selectedRow == 2 && fileMenu.items.filter { !$0.isSeparatorItem }.allSatisfy(\.isEnabled), "Right click must target the pointed file")
+        precondition(table.selectedRow == 2 && fileMenu.items.filter { !$0.isSeparatorItem && $0.title != "Reconnect" }.allSatisfy(\.isEnabled), "Right click must target the pointed file")
         fileMenu.performActionForItem(at: 0)
         waitUntil("Context Download uses save panel") { window.attachedSheet is NSSavePanel }
         (window.attachedSheet as! NSSavePanel).cancel(nil)
@@ -229,9 +229,7 @@ struct BrowserChecks {
         let download = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "download" }!
         let open = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "connect" }!
         descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Cancel Remaining" }!.performClick(nil)
-        waitUntil("Download cancellation summary") { !controller.busy && window.attachedSheet != nil }
-        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "OK" }!.performClick(nil)
-        waitUntil("Summary dismissal") { window.attachedSheet == nil }
+        waitUntil("Download cancellation") { !controller.busy && window.attachedSheet == nil }
         pump()
         precondition(download.isEnabled && open.isEnabled, "A recoverable error must permit another download")
         try Data("replace me".utf8).write(to: destination)
@@ -241,11 +239,11 @@ struct BrowserChecks {
         precondition(replacedBytes == expected)
         precondition(downloads.entries.count == 3, "Only successful downloads belong in history")
         controller.showDownloads(nil)
-        let downloadsWindow = NSApp.windows.first { $0.title == "Downloads — Retriever" }!
+        let downloadsWindow = NSApp.windows.first { $0.title == "Transfers — Retriever" }!
         let historyTable = descendants(downloadsWindow.contentView!).compactMap { $0 as? NSTableView }.first!
         precondition(historyTable.numberOfRows == 3)
         controller.showDownloads(nil)
-        precondition(NSApp.windows.filter { $0.title == "Downloads — Retriever" }.count == 1)
+        precondition(NSApp.windows.filter { $0.title == "Transfers — Retriever" }.count == 1)
         historyTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         precondition(descendants(downloadsWindow.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Show in Finder" }!.isEnabled)
         for _ in 0..<5 { pump() }
@@ -341,9 +339,7 @@ struct BrowserChecks {
         controller.uploadFile(uploadSource)
         waitUntil("Remote replacement confirmation") { controller.busy && window.attachedSheet != nil }
         descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Cancel Remaining" }!.performClick(nil)
-        waitUntil("Upload cancellation summary") { !controller.busy && window.attachedSheet != nil }
-        descendants(window.attachedSheet!.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "OK" }!.performClick(nil)
-        waitUntil("Decline remote replacement") { window.attachedSheet == nil }
+        waitUntil("Upload cancellation") { !controller.busy && window.attachedSheet == nil }
         let unchangedUpload = try Data(contentsOf: uploadTarget)
         precondition(unchangedUpload == uploadBytes)
         controller.uploadFile(uploadSource)
@@ -352,7 +348,7 @@ struct BrowserChecks {
         waitUntil("Approved upload replacement") { window.attachedSheet == nil && !controller.busy && (try? Data(contentsOf: uploadTarget)) == Data("replacement upload".utf8) }
         let replacedUpload = try Data(contentsOf: uploadTarget)
         precondition(replacedUpload == Data("replacement upload".utf8))
-        precondition(downloads.entries.isEmpty, "Uploads must not enter download history")
+        precondition(downloads.entries.filter { $0.uploaded == true }.count == 2, "Completed uploads enter transfer history")
         for _ in 0..<5 { pump() }
         let uploadShot = Process()
         uploadShot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -396,7 +392,7 @@ struct BrowserChecks {
         precondition(tryBytes(batchDestination.appendingPathComponent("Batch folder/Nested/inside.txt")) == batchBytes)
         precondition(FileManager.default.fileExists(atPath: batchDestination.appendingPathComponent("Batch folder/Nested/Empty").path))
         precondition(tryBytes(batchDestination.appendingPathComponent("batch-file.txt")) == batchBytes)
-        precondition(downloads.entries.count == 2, "Every completed file, but not a folder, belongs in history")
+        precondition(downloads.entries.filter { $0.uploaded != true }.count == 2, "Every completed file, but not a folder, belongs in history")
         let promiseDestination = root.appendingPathComponent("promised-download")
         try FileManager.default.createDirectory(at: promiseDestination, withIntermediateDirectories: false)
         let treePromise = controller.outlineView(outline, pasteboardWriterForItem: outline.item(atRow: treeRow)!) as! RemoteFilePromise
@@ -415,7 +411,7 @@ struct BrowserChecks {
         precondition(tryBytes(promiseDestination.appendingPathComponent("Batch folder/Nested/inside.txt")) == batchBytes)
         precondition(tryBytes(promiseDestination.appendingPathComponent("batch-file.txt")) == batchBytes)
         precondition(FileManager.default.fileExists(atPath: promiseDestination.appendingPathComponent("Batch folder/Nested/Empty").path))
-        precondition(downloads.entries.count == 4)
+        precondition(downloads.entries.filter { $0.uploaded != true }.count == 4)
         controller.finishFileDrag(operation: .copy)
         // Finder may request the next item only after the first completion returns.
         // Remember "Skip remaining" across that idle gap and delay the results sheet.
@@ -447,7 +443,7 @@ struct BrowserChecks {
         waitUntil("Delayed second promise reuses conflict choice") { skippedResults.count == 2 && !controller.busy }
         precondition(skippedResults.allSatisfy { $0 != nil }, "Skipped promises must report unsuccessful fulfillment")
         precondition(tryBytes(firstConflict) == originalConflictBytes && tryBytes(secondConflict) == originalConflictBytes)
-        precondition(downloads.entries.count == 4, "Skipped items must not enter history")
+        precondition(downloads.entries.filter { $0.uploaded != true }.count == 4, "Skipped items must not enter history")
         waitUntil("Drag group final results") { window.attachedSheet != nil }
         let resultControls = descendants(window.attachedSheet!.contentView!)
         precondition(resultControls.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("2 skipped") },
@@ -653,13 +649,17 @@ struct BrowserChecks {
         try "drop-write".write(to: faultMode, atomically: true, encoding: .utf8)
         controller.uploadFile(resumeSource)
         waitUntil("Interrupted write") { !controller.busy && window.attachedSheet != nil }
-        try "delay-read".write(to: faultMode, atomically: true, encoding: .utf8)
-        press("Resume Upload")
-        waitUntil("Checking remote partial") {
-            descendants(window.contentView!).compactMap { $0 as? NSTextField }.contains { $0.stringValue.hasPrefix("Checking partial upload") }
+        try "verify-resumed-write".write(to: faultMode, atomically: true, encoding: .utf8)
+        press("Show in Transfers")
+        let transfers = NSApp.windows.first { $0.title == "Transfers — Retriever" }!
+        try captureRendered(transfers, filename: "transfer-recovery.png")
+        descendants(transfers.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Resume" }!.performClick(nil)
+        waitUntil("Existing upload verification") {
+            descendants(window.contentView!).compactMap { $0 as? NSTextField }.contains { $0.stringValue.hasPrefix("Checking existing upload") }
         }
-        try captureRendered(window, filename: "upload-resume-content.png")
+        try captureRendered(window, filename: "upload-resume-verification.png")
         waitUntil("Resumed upload") { !controller.busy && window.attachedSheet == nil && FileManager.default.fileExists(atPath: resumeTarget.path) }
+        precondition(!FileManager.default.fileExists(atPath: faultMode.path), "Expected a write at the retained partial length")
         let resumedBytes = try Data(contentsOf: resumeTarget)
         precondition(resumedBytes == resumeBytes)
 
@@ -667,6 +667,23 @@ struct BrowserChecks {
         let payloadRow = (0..<outline.numberOfRows).first {
             (outline.view(atColumn: 0, row: $0, makeIfNecessary: true) as? NSTableCellView)?.textField?.stringValue == "payload.bin"
         }!
+        outline.selectRowIndexes(IndexSet(integer: payloadRow), byExtendingSelection: false)
+        let pausedDownload = root.appendingPathComponent("paused-download.bin")
+        try "delay-read".write(to: faultMode, atomically: true, encoding: .utf8)
+        controller.retrieveSelection(to: pausedDownload)
+        let pauseButton = descendants(window.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Pause" }!
+        waitUntil("Pause enabled during download") { controller.busy && !pauseButton.isHidden }
+        try captureRendered(window, filename: "transfer-pause.png")
+        pauseButton.performClick(nil)
+        waitUntil("Paused download") { !controller.busy && window.attachedSheet == nil }
+        controller.showDownloads(nil)
+        let historyTable = descendants(transfers.contentView!).compactMap { $0 as? NSTableView }.first!
+        let row = (0..<historyTable.numberOfRows).first {
+            (historyTable.view(atColumn: 0, row: $0, makeIfNecessary: true) as? NSTextField)?.stringValue.contains("paused-download.bin") == true
+        }!
+        historyTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        descendants(transfers.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Resume" }!.performClick(nil)
+        waitUntil("Download resumed from Transfers") { !controller.busy && FileManager.default.fileExists(atPath: pausedDownload.path) }
         outline.selectRowIndexes(IndexSet(integer: payloadRow), byExtendingSelection: false)
         let cancelledDownload = root.appendingPathComponent("cancelled-download.bin")
         try "delay-read".write(to: faultMode, atomically: true, encoding: .utf8)

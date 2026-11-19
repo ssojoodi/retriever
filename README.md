@@ -29,7 +29,8 @@ Requires an **Apple silicon Mac with macOS 14 or later**.
 - **Preview before saving.** Press Space or choose Preview from a file’s context menu. Escape closes the preview or cancels its download. Files larger than 1 MB require confirmation.
 - **Download where you choose.** Select files or folders with Command/Shift, then Download or drag them into Finder. Transfers run sequentially; folders include their contents and empty subfolders.
 - **Upload files and folders.** Choose Upload (⌘U), or drag local items into Retriever. Drop onto a folder to upload there; elsewhere uploads to the displayed folder. Approve folder merges and file replacements separately. Cancel leaves completed files intact.
-- **Find previous downloads.** Open Downloads with ⇧⌘J and use Show in Finder. Clearing history leaves your files on disk.
+- **Pause and resume a transfer.** Click Pause while uploading or downloading, then select the file in Transfers (⇧⌘J) and click Resume. Paused and interrupted files stay available after quitting Retriever. For a folder or batch, reselect the remaining items after resuming the current file.
+- **Find previous transfers.** Transfers shows completed uploads and downloads. Select a row and use Show in Finder to reveal the local file. Clear History clears completed entries.
 - **Recover without losing your place.** File errors preserve usable connections. If a connection closes, the listing stays visible and Reconnect lets you resume.
 
 Connect with SSH keys, an SSH agent, or a password. Retriever asks you to verify a new server’s fingerprint and rejects changed host keys. Passwords are never saved; accepted server keys stay in OpenSSH’s `known_hosts` file.
@@ -59,6 +60,8 @@ make build-release
 
 This builds and verifies arm64 binaries, optimizes for size, and strips release symbols. Signing and notarization happen in the separate release step.
 
+Both release commands disable coverage across the full build, including SwiftTerm. For a custom Release invocation, pass `ENABLE_CODE_COVERAGE=NO` to `xcodebuild` so the package target receives the same setting.
+
 ## How it works
 
 Retriever keeps the interface, connection logic, and SSH transport separate:
@@ -75,7 +78,7 @@ SFTPBrowser actor ──► SFTPSession ──► system SSH ──► SFTP serv
 
 | Part | Responsibility |
 | --- | --- |
-| [`RetrieverApp`](Sources/RetrieverApp) | AppKit windows, file outline, connection sheet, Quick Look previews, download history, and native SSH authentication prompts. |
+| [`RetrieverApp`](Sources/RetrieverApp) | AppKit windows, file outline, connection sheet, Quick Look previews, transfer history, and native SSH authentication prompts. |
 | [`RetrieverCore`](Sources/RetrieverCore) | Connection settings, SFTP packet handling, directory listings, transfers, cancellation, and persisted connection/download metadata. |
 | [`Tests`](Tests) | Core XCTest cases and native UI/SSH integration checks using disposable local fixtures. |
 

@@ -1,10 +1,75 @@
 import Foundation
 import Dispatch
+import Darwin
+
+public struct DownloadCheckpoint: Codable, Sendable {
+    let temporary: String
+    let device: dev_t
+    let inode: ino_t
+    let size: UInt64?
+    let modified: Date?
+    var digest: Data
+}
+
+public struct TransferRecovery: Codable, Sendable, Identifiable {
+    public let id: UUID
+    public let settings: ConnectionSettings
+    public let local: URL
+    public let remote: Data
+    public var bytes: UInt64
+    public var paused: Bool
+    var upload: UploadCheckpoint?
+    var download: DownloadCheckpoint?
+    public var isUpload: Bool { upload != nil }
+}
+
+public struct TransferJournal: Sendable {
+    public let directory: URL
+    public init(directory: URL) { self.directory = directory }
+    func save(_ record: TransferRecovery) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(record).write(to: directory.appendingPathComponent(record.id.uuidString), options: .atomic)
+    }
+    public func remove(_ id: UUID) throws {
+        try FileManager.default.removeItem(at: directory.appendingPathComponent(id.uuidString))
+    }
+    public func records() -> [TransferRecovery] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return files.compactMap { file in
+            guard let data = try? Data(contentsOf: file),
+                  let record = try? JSONDecoder().decode(TransferRecovery.self, from: data),
+                  file.lastPathComponent == record.id.uuidString else { return nil }
+            return record
+        }.sorted { $0.local.path < $1.local.path }
+    }
+}
+
+public struct TransferPaused: LocalizedError {
+    public var errorDescription: String? { "Transfer paused. Resume it in Transfers." }
+}
 
 /// Every access to the flag is locked; cancellation never touches session/file handles.
 public final class SFTPCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
+    private var pausable = false
+    private var paused = false
+    public var canPause: Bool { lock.withLock { pausable && !paused && !cancelled } }
+    public func pause() { lock.withLock { if pausable { paused = true } } }
+    func boundary(finishing: Bool = false) throws {
+        try lock.withLock {
+            if paused { throw TransferPaused() }
+            pausable = !finishing
+        }
+    }
+    func endFile() { lock.withLock { pausable = false } }
+    // Configured by the owner before submitting work to the serial worker.
+    typealias RecoveryContext = (journal: TransferJournal, settings: ConnectionSettings, record: TransferRecovery?)
+    private var context: RecoveryContext?
+    var recovery: RecoveryContext? { lock.withLock { context } }
+    public func enableRecovery(_ journal: TransferJournal, settings: ConnectionSettings, resuming: TransferRecovery? = nil) {
+        lock.withLock { context = (journal, settings, resuming) }
+    }
     public init() {}
     public func cancel() { lock.withLock { cancelled = true } }
     public var isCancelled: Bool { lock.withLock { cancelled } }
@@ -130,6 +195,13 @@ public actor SFTPBrowser {
     @discardableResult
     public func download(_ path: Data, to directory: LocalTransferDirectory, name: String, policy: DownloadDestinationPolicy = .exclusive, maximumBytes: UInt64? = nil, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
         guard let session else { throw SFTPError.disconnected }
+        if let context = cancellation.recovery {
+            guard context.settings == sessionSettings else { throw SFTPError.disconnected }
+            if let record = context.record {
+                guard !record.isUpload, record.settings == sessionSettings, record.remote == path,
+                      record.local == directory.url.appendingPathComponent(name) else { throw SFTPError.downloadResumeMismatch }
+            }
+        }
         session.cancellation = cancellation
         do {
             var lastUpdate: TimeInterval = 0
@@ -156,15 +228,29 @@ public actor SFTPBrowser {
     }
 
     @discardableResult
-    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }, finishing: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, verifying: @Sendable (UInt64) -> Void = { _ in }, progress: @Sendable (UInt64) -> Void = { _ in }, finishing: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
         guard let session, let settings = sessionSettings else { throw SFTPError.disconnected }
+        if let context = cancellation.recovery {
+            guard context.settings == settings else { throw SFTPError.disconnected }
+            if let record = context.record {
+                guard record.isUpload, record.settings == settings, record.remote == path,
+                      record.local == directory.url.appendingPathComponent(name) else { throw SFTPError.uploadResumeMismatch }
+            }
+        }
         session.cancellation = cancellation
         do {
             var lastUpdate: TimeInterval = 0
+            var lastVerification: TimeInterval = 0
             let total = try session.upload(from: directory, name: name, to: path, policy: policy, progress: { bytes in
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastUpdate >= 0.1 { progress(bytes); lastUpdate = now }
-            }, finishing: finishing, retainForResume: true)
+            }, finishing: finishing, resuming: cancellation.recovery?.record?.upload, retainForResume: true, verifying: { bytes in
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - lastVerification >= 0.1 {
+                    verifying(bytes)
+                    lastVerification = now
+                }
+            })
             progress(total)
             return total
         } catch {
@@ -200,6 +286,27 @@ public actor SFTPBrowser {
                 throw InterruptedUpload(settings: upload.settings, source: upload.source, checkpoint: partial.checkpoint, message: partial.message)
             }
             throw error
+        }
+    }
+
+    public func discard(_ record: TransferRecovery, cancellation: SFTPCancellation) throws {
+        if let download = record.download {
+            let parent = try LocalTransferDirectory(url: record.local.deletingLastPathComponent())
+            guard download.temporary.hasPrefix(".retriever-"), download.temporary.hasSuffix(".partial"),
+                  !download.temporary.contains("/") else { throw POSIXError(.EINVAL) }
+            var info = stat()
+            if fstatat(parent.descriptor, download.temporary, &info, AT_SYMLINK_NOFOLLOW) != 0 {
+                if errno == ENOENT { return }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            guard info.st_mode & S_IFMT == S_IFREG, info.st_dev == download.device,
+                  info.st_ino == download.inode else { throw POSIXError(.ESTALE) }
+            guard unlinkat(parent.descriptor, download.temporary, 0) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        } else if let upload = record.upload {
+            guard let session, sessionSettings == record.settings else { throw SFTPError.disconnected }
+            session.cancellation = cancellation
+            do { try session.discard(upload, source: record.local) }
+            catch { handleFailure(error); throw error }
         }
     }
 

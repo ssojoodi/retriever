@@ -596,6 +596,82 @@ final class SFTPTests: XCTestCase {
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: fixture.path).contains { $0.hasSuffix(".partial") })
     }
 
+    func testPauseAndResumeBothDirectionsFromPersistedCheckpoint() throws {
+        let root = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = try LocalTransferDirectory(url: root)
+        let settings = try ConnectionSettings(host: "fixture", username: "test", port: "22")
+        let journal = TransferJournal(directory: root.appendingPathComponent("journal"))
+        let payload = Data((0..<140000).map { UInt8(truncatingIfNeeded: $0) })
+        for upload in [false, true] {
+            let source = root.appendingPathComponent("source")
+            let target = root.appendingPathComponent(upload ? "uploaded" : "downloaded")
+            try payload.write(to: source)
+            for attempt in 0..<3 {
+                let signal = SFTPCancellation()
+                let record = journal.records().first
+                signal.enableRecovery(journal, settings: settings, resuming: record)
+                let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [], cancellation: signal)
+                defer { session.disconnect() }
+                let progress: (UInt64) -> Void = { bytes in
+                    if attempt < 2 && bytes > (record?.bytes ?? 0) { signal.pause() }
+                }
+                do {
+                    if upload {
+                        try session.upload(from: directory, name: "source", to: Data(target.path.utf8), progress: progress, resuming: record?.upload, retainForResume: true)
+                    } else {
+                        try session.download(Data(source.path.utf8), to: directory, name: target.lastPathComponent, progress: progress)
+                    }
+                    XCTAssertEqual(attempt, 2)
+                } catch is TransferPaused {
+                    XCTAssertLessThan(attempt, 2)
+                    XCTAssertTrue(try XCTUnwrap(journal.records().first).paused)
+                    XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+                }
+            }
+            XCTAssertEqual(try Data(contentsOf: target), payload)
+            XCTAssertTrue(journal.records().isEmpty)
+        }
+    }
+
+    func testDroppedDownloadRejectsTamperingAndResumesAtSavedOffset() throws {
+        let root = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source")
+        let target = root.appendingPathComponent("target")
+        let marker = root.appendingPathComponent("fault")
+        let bytes = Data((0..<180000).map { UInt8(truncatingIfNeeded: $0) })
+        try bytes.write(to: source)
+        let journal = TransferJournal(directory: root.appendingPathComponent("journal"))
+        let settings = try ConnectionSettings(host: "fixture", username: "test", port: "22")
+        let directory = try LocalTransferDirectory(url: root)
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        func download() throws {
+            let signal = SFTPCancellation()
+            signal.enableRecovery(journal, settings: settings, resuming: journal.records().first)
+            let session = try SFTPSession(executable: URL(fileURLWithPath: "/usr/bin/python3"),
+                arguments: [repo.appendingPathComponent("scripts/upload_fault_proxy.py").path, marker.path, "/usr/libexec/sftp-server"], cancellation: signal)
+            defer { session.disconnect() }
+            try session.download(Data(source.path.utf8), to: directory, name: "target")
+        }
+        try "drop-next-read".write(to: marker, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try download())
+        let record = try XCTUnwrap(journal.records().first)
+        XCTAssertGreaterThan(record.bytes, 0)
+        let partial = root.appendingPathComponent(try XCTUnwrap(record.download?.temporary))
+        let file = try FileHandle(forWritingTo: partial)
+        try file.write(contentsOf: Data([255]))
+        XCTAssertThrowsError(try download()) { XCTAssertEqual($0 as? SFTPError, .downloadResumeMismatch) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+        try file.seek(toOffset: 0)
+        try file.write(contentsOf: bytes.prefix(1))
+        try file.close()
+        try "expect-resumed-read".write(to: marker, atomically: true, encoding: .utf8)
+        try download()
+        XCTAssertEqual(try Data(contentsOf: target), bytes)
+        XCTAssertTrue(journal.records().isEmpty)
+    }
+
     private func interruptedFixture(_ mode: String = "drop-write", size: UInt64 = 131_123) throws -> (URL, URL, URL, UploadCheckpoint) {
         let root = try makeFixture()
         let source = root.appendingPathComponent("source")

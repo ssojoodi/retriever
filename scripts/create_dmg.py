@@ -61,7 +61,7 @@ def main():
                 run('hdiutil', 'detach', mount)
             except subprocess.CalledProcessError:
                 raise RuntimeError(f'Could not detach {mount}; eject it before cleaning {root}')
-    run('hdiutil', 'convert', writable, '-format', 'UDZO', '-imagekey', 'zlib-level=9', '-o', output)
+    run('hdiutil', 'convert', writable, '-format', 'ULMO', '-o', output)
     run('hdiutil', 'verify', output)
     print(f'Branded DMG created: {output}')
 

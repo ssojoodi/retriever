@@ -44,6 +44,26 @@ try:
         if (mode == 'drop-write' and kind == 6) or late_write or (mode == 'drop-rename' and kind in (18, 200)):
             marker.unlink()
             break
+        if kind == 5 and mode in ('drop-next-read', 'expect-resumed-read'):
+            handle_length = struct.unpack('>I', request[9:13])[0]
+            offset = struct.unpack('>Q', request[13 + handle_length:21 + handle_length])[0]
+            if mode == 'drop-next-read' and offset > 0:
+                marker.unlink()
+                break
+            if mode == 'expect-resumed-read':
+                marker.unlink()
+                if offset == 0:
+                    break
+        # The interrupted write fixture has one 32 KiB chunk on the server.
+        if mode == 'verify-resumed-write':
+            if kind == 5:
+                time.sleep(1)
+            if kind == 6:
+                handle_length = struct.unpack('>I', request[9:13])[0]
+                offset = struct.unpack_from('>Q', request, 13 + handle_length)[0]
+                if offset != 32768:
+                    raise AssertionError(f"First resumed write started at {offset}")
+                marker.unlink()
         if mode == 'delay-read' and kind == 5:
             marker.unlink()
             time.sleep(2)
