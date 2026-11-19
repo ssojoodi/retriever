@@ -28,7 +28,8 @@ struct TransferProgress {
     let item: TransferItem
     let bytes: UInt64
     let completedFiles: Int
-    var finishing = false
+    enum Phase: Int, Sendable { case preparing, verifying, transferring, finishing }
+    var phase: Phase = .transferring
 }
 struct TransferFailure {
     let item: TransferItem
@@ -71,7 +72,7 @@ protocol TransferClient {
     func entries(_ path: Data, cancellation: SFTPCancellation) async throws -> [RemoteEntry]
     func createDirectory(_ path: Data, cancellation: SFTPCancellation) async throws
     func download(_ path: Data, directory: LocalTransferDirectory, name: String, policy: DownloadDestinationPolicy, cancellation: SFTPCancellation, progress: @escaping @Sendable (UInt64) -> Void) async throws -> UInt64
-    func upload(directory: LocalTransferDirectory, name: String, path: Data, policy: UploadDestinationPolicy, cancellation: SFTPCancellation, finishing: @escaping @Sendable (UInt64) -> Void, progress: @escaping @Sendable (UInt64) -> Void) async throws -> UInt64
+    func upload(directory: LocalTransferDirectory, name: String, path: Data, policy: UploadDestinationPolicy, cancellation: SFTPCancellation, verifying: @escaping @Sendable (UInt64) -> Void, finishing: @escaping @Sendable (UInt64) -> Void, progress: @escaping @Sendable (UInt64) -> Void) async throws -> UInt64
 }
 
 @MainActor
@@ -90,8 +91,8 @@ private struct BrowserTransferClient: TransferClient {
     func download(_ path: Data, directory: LocalTransferDirectory, name: String, policy: DownloadDestinationPolicy, cancellation: SFTPCancellation, progress: @escaping @Sendable (UInt64) -> Void) async throws -> UInt64 {
         try await browser.download(path, to: directory, name: name, policy: policy, cancellation: cancellation, progress: progress)
     }
-    func upload(directory: LocalTransferDirectory, name: String, path: Data, policy: UploadDestinationPolicy, cancellation: SFTPCancellation, finishing: @escaping @Sendable (UInt64) -> Void, progress: @escaping @Sendable (UInt64) -> Void) async throws -> UInt64 {
-        try await browser.upload(from: directory, name: name, to: path, policy: policy, cancellation: cancellation, progress: progress, finishing: finishing)
+    func upload(directory: LocalTransferDirectory, name: String, path: Data, policy: UploadDestinationPolicy, cancellation: SFTPCancellation, verifying: @escaping @Sendable (UInt64) -> Void, finishing: @escaping @Sendable (UInt64) -> Void, progress: @escaping @Sendable (UInt64) -> Void) async throws -> UInt64 {
+        try await browser.upload(from: directory, name: name, to: path, policy: policy, cancellation: cancellation, verifying: verifying, progress: progress, finishing: finishing)
     }
 }
 
@@ -101,7 +102,7 @@ private struct BrowserTransferClient: TransferClient {
 final class TransferCoordinator {
     private let client: any TransferClient
     private var progressGeneration: UUID?
-    private var finishingGeneration: UUID?
+    private var progressPhase = TransferProgress.Phase.preparing
     init(browser: SFTPBrowser) { client = BrowserTransferClient(browser: browser) }
     init(client: any TransferClient) { self.client = client }
 
@@ -144,7 +145,7 @@ final class TransferCoordinator {
                     let item = work.item
                     let name = item.localURL.lastPathComponent
                     guard Self.validName(name) else { throw TransferIssue.invalidName }
-                    progress(TransferProgress(item: item, bytes: 0, completedFiles: summary.completedFiles))
+                    progress(TransferProgress(item: item, bytes: 0, completedFiles: summary.completedFiles, phase: .preparing))
                     let local = try work.parent.attributes(of: name)
                     let remote = try await client.attributes(item.remotePath, cancellation: cancellation)
                     let sourceKind: Kind?
@@ -212,24 +213,22 @@ final class TransferCoordinator {
                         let generation = UUID()
                         progressGeneration = generation
                         defer { progressGeneration = nil }
-                        let report: @Sendable (UInt64) -> Void = { bytes in
+                        progressPhase = .preparing
+                        let report: @Sendable (TransferProgress.Phase, UInt64) -> Void = { phase, bytes in
                             Task { @MainActor [weak self] in
-                                guard self?.progressGeneration == generation, self?.finishingGeneration != generation else { return }
-                                progress(TransferProgress(item: item, bytes: bytes, completedFiles: completed))
+                                guard let self, progressGeneration == generation, phase.rawValue >= progressPhase.rawValue else { return }
+                                progressPhase = phase
+                                progress(TransferProgress(item: item, bytes: bytes, completedFiles: completed, phase: phase))
                             }
                         }
                         let bytes: UInt64
                         if direction == .download {
-                            bytes = try await client.download(item.remotePath, directory: work.parent, name: name, policy: replace ? .replaceApproved : .exclusive, cancellation: cancellation, progress: report)
+                            bytes = try await client.download(item.remotePath, directory: work.parent, name: name, policy: replace ? .replaceApproved : .exclusive, cancellation: cancellation, progress: { report(.transferring, $0) })
                             didDownload(item, bytes)
                         } else {
-                            bytes = try await client.upload(directory: work.parent, name: name, path: item.remotePath, policy: replace ? .replaceApproved : .exclusive, cancellation: cancellation, finishing: { bytes in
-                                Task { @MainActor [weak self] in
-                                    guard let self, progressGeneration == generation else { return }
-                                    finishingGeneration = generation
-                                    progress(TransferProgress(item: item, bytes: bytes, completedFiles: completed, finishing: true))
-                                }
-                            }, progress: report)
+                            bytes = try await client.upload(directory: work.parent, name: name, path: item.remotePath, policy: replace ? .replaceApproved : .exclusive, cancellation: cancellation,
+                                verifying: { report(.verifying, $0) }, finishing: { report(.finishing, $0) },
+                                progress: { report(.transferring, $0) })
                             didUpload(item, bytes)
                         }
                         summary.completedFiles += 1

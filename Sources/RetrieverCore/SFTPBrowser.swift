@@ -228,7 +228,7 @@ public actor SFTPBrowser {
     }
 
     @discardableResult
-    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, progress: @Sendable (UInt64) -> Void = { _ in }, finishing: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
+    public func upload(from directory: LocalTransferDirectory, name: String, to path: Data, policy: UploadDestinationPolicy = .exclusive, cancellation: SFTPCancellation, verifying: @Sendable (UInt64) -> Void = { _ in }, progress: @Sendable (UInt64) -> Void = { _ in }, finishing: @Sendable (UInt64) -> Void = { _ in }) throws -> UInt64 {
         guard let session, let settings = sessionSettings else { throw SFTPError.disconnected }
         if let context = cancellation.recovery {
             guard context.settings == settings else { throw SFTPError.disconnected }
@@ -240,10 +240,17 @@ public actor SFTPBrowser {
         session.cancellation = cancellation
         do {
             var lastUpdate: TimeInterval = 0
+            var lastVerification: TimeInterval = 0
             let total = try session.upload(from: directory, name: name, to: path, policy: policy, progress: { bytes in
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastUpdate >= 0.1 { progress(bytes); lastUpdate = now }
-            }, finishing: finishing, resuming: cancellation.recovery?.record?.upload, retainForResume: true, verifying: progress)
+            }, finishing: finishing, resuming: cancellation.recovery?.record?.upload, retainForResume: true, verifying: { bytes in
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - lastVerification >= 0.1 {
+                    verifying(bytes)
+                    lastVerification = now
+                }
+            })
             progress(total)
             return total
         } catch {

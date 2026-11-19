@@ -220,7 +220,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         self.browser = browser
         self.history = history
         self.downloads = downloads
-        let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 1025, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Retriever"
         window.titleVisibility = .hidden
         window.minSize = NSSize(width: 580, height: 360)
@@ -811,7 +811,15 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
                 guard let self, cancellation === signal else { return }
                 pauseButton.isHidden = !signal.canPause
                 let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: value.bytes), countStyle: .file)
-                if value.finishing {
+                switch value.phase {
+                case .preparing:
+                    status.stringValue = "Preparing \(value.item.localURL.lastPathComponent)…"
+                    return
+                case .verifying:
+                    status.stringValue = "Checking existing upload — \(value.item.localURL.lastPathComponent) — \(count) verified"
+                    return
+                case .transferring: break
+                case .finishing:
                     status.stringValue = "Finishing upload… — \(value.item.localURL.lastPathComponent)"
                     return
                 }

@@ -54,6 +54,16 @@ try:
                 marker.unlink()
                 if offset == 0:
                     break
+        # The interrupted write fixture has one 32 KiB chunk on the server.
+        if mode == 'verify-resumed-write':
+            if kind == 5:
+                time.sleep(1)
+            if kind == 6:
+                handle_length = struct.unpack('>I', request[9:13])[0]
+                offset = struct.unpack_from('>Q', request, 13 + handle_length)[0]
+                if offset != 32768:
+                    raise AssertionError(f"First resumed write started at {offset}")
+                marker.unlink()
         if mode == 'delay-read' and kind == 5:
             marker.unlink()
             time.sleep(2)

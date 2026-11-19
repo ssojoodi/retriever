@@ -649,12 +649,17 @@ struct BrowserChecks {
         try "drop-write".write(to: faultMode, atomically: true, encoding: .utf8)
         controller.uploadFile(resumeSource)
         waitUntil("Interrupted write") { !controller.busy && window.attachedSheet != nil }
-        try "delay-read".write(to: faultMode, atomically: true, encoding: .utf8)
+        try "verify-resumed-write".write(to: faultMode, atomically: true, encoding: .utf8)
         press("Show in Transfers")
         let transfers = NSApp.windows.first { $0.title == "Transfers — Retriever" }!
         try captureRendered(transfers, filename: "transfer-recovery.png")
         descendants(transfers.contentView!).compactMap { $0 as? NSButton }.first { $0.title == "Resume" }!.performClick(nil)
+        waitUntil("Existing upload verification") {
+            descendants(window.contentView!).compactMap { $0 as? NSTextField }.contains { $0.stringValue.hasPrefix("Checking existing upload") }
+        }
+        try captureRendered(window, filename: "upload-resume-verification.png")
         waitUntil("Resumed upload") { !controller.busy && window.attachedSheet == nil && FileManager.default.fileExists(atPath: resumeTarget.path) }
+        precondition(!FileManager.default.fileExists(atPath: faultMode.path), "Expected a write at the retained partial length")
         let resumedBytes = try Data(contentsOf: resumeTarget)
         precondition(resumedBytes == resumeBytes)
 
