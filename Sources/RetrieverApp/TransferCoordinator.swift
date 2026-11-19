@@ -115,6 +115,7 @@ final class TransferCoordinator {
              conflict: @escaping @MainActor (TransferConflict) async -> TransferDecision,
              progress: @escaping @MainActor (TransferProgress) -> Void = { _ in },
              didDownload: @escaping @MainActor (TransferItem, UInt64) -> Void = { _, _ in },
+             didUpload: @escaping @MainActor (TransferItem, UInt64) -> Void = { _, _ in },
              rootCompleted: @escaping @MainActor (TransferRootOutcome) -> Void = { _ in }) async -> TransferSummary {
         var summary = TransferSummary()
         let groups = Self.rootGroups(items, direction: direction)
@@ -229,12 +230,18 @@ final class TransferCoordinator {
                                     progress(TransferProgress(item: item, bytes: bytes, completedFiles: completed, finishing: true))
                                 }
                             }, progress: report)
+                            didUpload(item, bytes)
                         }
                         summary.completedFiles += 1
                         progress(TransferProgress(item: item, bytes: bytes, completedFiles: summary.completedFiles))
                     }
                 } catch {
                     firstError = firstError ?? error
+                    if error is TransferPaused {
+                        summary.failures.append(TransferFailure(item: work.item, error: error))
+                        summary.cancelled = true
+                        break
+                    }
                     if error is CancellationError {
                         summary.cancelled = true
                         break

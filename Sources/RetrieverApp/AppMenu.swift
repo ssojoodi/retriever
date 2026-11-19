@@ -33,7 +33,7 @@ enum AppMenu {
         let file = submenu("File")
         file.addItem(withTitle: "Open Connection…", action: #selector(MainWindowController.openConnection(_:)), keyEquivalent: "o")
         file.addItem(withTitle: "Upload Files…", action: #selector(MainWindowController.uploadSelected(_:)), keyEquivalent: "u")
-        file.addItem(withTitle: "Resume Last Interrupted Upload…", action: #selector(MainWindowController.resumeInterruptedUpload(_:)), keyEquivalent: "")
+        file.addItem(withTitle: "Resume Transfer…", action: #selector(MainWindowController.resumeInterruptedUpload(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Download Selected Files…", action: #selector(MainWindowController.downloadSelected(_:)), keyEquivalent: "d")
         file.addItem(withTitle: "Preview Selected File", action: #selector(MainWindowController.previewSelected(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Reconnect", action: #selector(MainWindowController.reconnect(_:)), keyEquivalent: "")
@@ -51,7 +51,7 @@ enum AppMenu {
         let window = submenu("Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        let downloads = window.addItem(withTitle: "Downloads", action: #selector(AppDelegate.showDownloads(_:)), keyEquivalent: "j")
+        let downloads = window.addItem(withTitle: "Transfers", action: #selector(AppDelegate.showDownloads(_:)), keyEquivalent: "j")
         downloads.keyEquivalentModifierMask = [.command, .shift]
         NSApp.windowsMenu = window
         let help = submenu("Help")

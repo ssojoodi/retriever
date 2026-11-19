@@ -2,6 +2,7 @@ import Foundation
 
 public struct CompletedDownload: Codable, Identifiable, Sendable {
     public let id: UUID
+    public var uploaded: Bool?
     public let filename: String
     public let settings: ConnectionSettings
     public let remotePath: Data
@@ -13,19 +14,24 @@ public struct CompletedDownload: Codable, Identifiable, Sendable {
 
 @MainActor
 public final class DownloadHistory {
+    public let journal: TransferJournal
     private let defaults: UserDefaults
     private let key = "completedDownloads.v1"
     public private(set) var entries: [CompletedDownload]
     public var didChange: (() -> Void)?
 
     public init(defaults: UserDefaults = .standard) {
+        let journalKey = "transferJournalID.v1"
+        let id = defaults.string(forKey: journalKey).flatMap(UUID.init(uuidString:)) ?? UUID()
+        defaults.set(id.uuidString, forKey: journalKey)
+        journal = TransferJournal(directory: URL.applicationSupportDirectory.appending(path: "Retriever/Transfers/").appending(path: id.uuidString))
         self.defaults = defaults
         entries = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([CompletedDownload].self, from: $0) } ?? []
     }
 
-    public func record(filename: String, settings: ConnectionSettings, remotePath: Data, destination: URL, byteCount: UInt64) {
+    public func record(filename: String, settings: ConnectionSettings, remotePath: Data, destination: URL, byteCount: UInt64, uploaded: Bool = false) {
         let bookmark = try? destination.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-        entries.insert(CompletedDownload(id: UUID(), filename: filename, settings: settings, remotePath: remotePath, completedAt: Date(), byteCount: byteCount, destination: destination, bookmark: bookmark), at: 0)
+        entries.insert(CompletedDownload(id: UUID(), uploaded: uploaded, filename: filename, settings: settings, remotePath: remotePath, completedAt: Date(), byteCount: byteCount, destination: destination, bookmark: bookmark), at: 0)
         persist()
         didChange?()
     }

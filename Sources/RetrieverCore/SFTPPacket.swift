@@ -15,6 +15,7 @@ public enum SFTPError: LocalizedError, Equatable {
     case uploadReplacementUnsupported
     case uploadSourceChanged
     case uploadIncomplete(String)
+    case downloadResumeMismatch
     case uploadResumeMismatch
     case uploadResumeUnavailable
 
@@ -34,6 +35,7 @@ public enum SFTPError: LocalizedError, Equatable {
         case .uploadReplacementUnsupported: "This server does not support safe file replacement. Rename the local file before uploading it."
         case .uploadSourceChanged: "The local file changed during upload. Try again after it has finished saving."
         case .uploadIncomplete(let message): message
+        case .downloadResumeMismatch: "The remote file or saved partial could not be verified. Choose Restart in Transfers to download it again."
         case .uploadResumeMismatch: "The remote partial file does not match the local file. It was not resumed. Retry from the beginning instead."
         case .uploadResumeUnavailable: "The partial upload is missing, and completion could not be verified. Check the destination before retrying."
         }

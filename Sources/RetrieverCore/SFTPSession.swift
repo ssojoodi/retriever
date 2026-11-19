@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 public enum DownloadDestinationPolicy: Sendable {
     case exclusive
@@ -11,15 +12,15 @@ public enum UploadDestinationPolicy: Sendable {
     case replaceApproved
 }
 
-/// Opaque, session-only metadata for an upload created by Retriever.
-public struct UploadCheckpoint: Sendable {
+/// Checkpoint metadata for an upload created by Retriever.
+public struct UploadCheckpoint: Codable, Sendable {
     let temporary: Data
     let destination: Data
     let source: UploadSourceIdentity
     var publicationAttempted = false
 }
 
-struct UploadSourceIdentity: Equatable, Sendable {
+struct UploadSourceIdentity: Codable, Equatable, Sendable {
     let device: dev_t
     let inode: ino_t
     let size: off_t
@@ -210,7 +211,7 @@ public final class SFTPSession {
     }
 
     /// Writes a sibling temporary file, then atomically publishes under an explicit destination policy.
-    /// Failed reads leave the destination untouched and remove the temporary file.
+    /// Recoverable transfers retain the temporary file after pause or transport loss.
     @discardableResult
     public func download(_ path: Data, to destination: URL, policy: DownloadDestinationPolicy = .exclusive, maximumBytes: UInt64? = nil, progress: (UInt64) -> Void = { _ in }) throws -> UInt64 {
         let directory = try LocalTransferDirectory(url: destination.deletingLastPathComponent())
@@ -227,41 +228,130 @@ public final class SFTPSession {
         var response = try request(3, payload: payload, expecting: 102)
         let handle = try response.bytes()
         defer { finishHandle(handle) }
-        let temporary = ".retriever-\(UUID().uuidString).partial"
-        let descriptor = openat(directory.descriptor, temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode_t(0o600))
+        let context = cancellation.recovery
+        let previous = context?.record?.download
+        let temporary = previous?.temporary ?? ".retriever-\(UUID().uuidString).partial"
+        guard !temporary.contains("/"), temporary.hasPrefix(".retriever-"), temporary.hasSuffix(".partial") else { throw POSIXError(.EINVAL) }
+        let attributes = context == nil ? nil : try handleAttributes(handle)
+        if let previous {
+            guard let current = try self.attributes(at: path), !current.isSymbolicLink,
+                  current.size == previous.size, current.modified == previous.modified else { throw SFTPError.downloadResumeMismatch }
+            guard previous.size != nil, previous.modified != nil, attributes?.size == previous.size,
+                  attributes?.modified == previous.modified, attributes?.isSymbolicLink == false else { throw SFTPError.downloadResumeMismatch }
+        }
+        let flags = O_RDWR | O_NOFOLLOW | O_CLOEXEC | (previous == nil ? O_CREAT | O_EXCL : 0)
+        var descriptor = openat(directory.descriptor, temporary, flags, mode_t(0o600))
+        var alreadyPublished = false
+        if descriptor < 0, errno == ENOENT, previous != nil {
+            // The process may have exited between the atomic rename and journal removal.
+            descriptor = try directory.openFile(named: name)
+            alreadyPublished = true
+        }
         guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        defer { _ = unlinkat(directory.descriptor, temporary, 0) }
+        var keep = previous != nil
+        defer {
+            cancellation.endFile()
+            if !keep { _ = unlinkat(directory.descriptor, temporary, 0) }
+        }
         let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? file.close() }
+        var identity = stat()
+        guard fstat(descriptor, &identity) == 0, identity.st_mode & S_IFMT == S_IFREG,
+              identity.st_nlink == 1 else { throw POSIXError(.EINVAL) }
+        var hash = SHA256()
+        var record = context.map { _, settings, old in
+            old ?? TransferRecovery(id: UUID(), settings: settings, local: directory.url.appendingPathComponent(name), remote: path, bytes: 0, paused: false, download: DownloadCheckpoint(temporary: temporary, device: identity.st_dev, inode: identity.st_ino, size: attributes?.size, modified: attributes?.modified, digest: Data(hash.finalize())))
+        }
         var offset: UInt64 = 0
-        while true {
-            var read = SFTPWriter()
-            read.bytes(handle)
-            read.uint64(offset)
-            read.uint32(32768)
-            do { response = try request(5, payload: read, expecting: 103) }
-            catch SFTPError.server(1, _) { break }
-            let bytes = try response.bytes()
-            guard !bytes.isEmpty, bytes.count <= 32768, response.remaining == 0 else { throw SFTPError.malformedPacket }
-            if let maximumBytes, offset + UInt64(bytes.count) > maximumBytes { throw SFTPError.previewLimitExceeded }
-            try file.write(contentsOf: bytes)
-            offset += UInt64(bytes.count)
+        if let previous, let record {
+            guard previous.device == identity.st_dev, previous.inode == identity.st_ino, identity.st_size >= record.bytes else { throw SFTPError.downloadResumeMismatch }
+            while offset < record.bytes {
+                try cancellation.check()
+                try cancellation.boundary()
+                guard let data = try file.read(upToCount: Int(min(record.bytes - offset, 262144))), !data.isEmpty else { throw POSIXError(.EIO) }
+                hash.update(data: data)
+                offset += UInt64(data.count)
+                progress(offset)
+            }
+            guard Data(hash.finalize()) == previous.digest else { throw SFTPError.downloadResumeMismatch }
+            if alreadyPublished {
+                guard previous.size == offset, identity.st_size == offset else { throw SFTPError.downloadResumeMismatch }
+                try context?.journal.remove(record.id)
+                return offset
+            }
+            try file.truncate(atOffset: offset)
+        }
+        func save(_ paused: Bool) throws {
+            guard var current = record, let context else { return }
+            try file.synchronize()
+            current.download?.digest = Data(hash.finalize())
+            current.bytes = offset
+            current.paused = paused
+            try context.journal.save(current)
+            record = current
+        }
+        try save(false)
+        do {
+            if context != nil {
+                try cancellation.boundary()
+                progress(offset)
+            }
+            while true {
+                if context != nil { try cancellation.boundary() }
+                var read = SFTPWriter()
+                read.bytes(handle)
+                read.uint64(offset)
+                read.uint32(32768)
+                do { response = try request(5, payload: read, expecting: 103) }
+                catch SFTPError.server(1, _) { break }
+                let bytes = try response.bytes()
+                guard !bytes.isEmpty, bytes.count <= 32768, response.remaining == 0 else { throw SFTPError.malformedPacket }
+                if let maximumBytes, offset + UInt64(bytes.count) > maximumBytes { throw SFTPError.previewLimitExceeded }
+                try file.write(contentsOf: bytes)
+                offset += UInt64(bytes.count)
+                if let record {
+                    hash.update(data: bytes)
+                    if offset - record.bytes >= 8 * 1024 * 1024 { try save(false) }
+                }
+                progress(offset)
+            }
+            if context != nil {
+                try cancellation.boundary(finishing: true)
+                let final = try handleAttributes(handle)
+                guard final.modified == attributes?.modified, final.size == attributes?.size,
+                      final.size == nil || final.size == offset else { throw SFTPError.downloadResumeMismatch }
+                try save(false)
+            }
+            try cancellation.check()
+            try file.synchronize()
+            try file.close()
+            try cancellation.check()
+            var namedPartial = stat()
+            guard fstatat(directory.descriptor, temporary, &namedPartial, AT_SYMLINK_NOFOLLOW) == 0,
+                  namedPartial.st_dev == identity.st_dev, namedPartial.st_ino == identity.st_ino,
+                  namedPartial.st_size == offset else { throw SFTPError.downloadResumeMismatch }
+            try validateDestination(directory, name: name, policy: policy)
+            // Keep publication relative to the retained parent, including after a rename.
+            let published = renameatx_np(directory.descriptor, temporary, directory.descriptor, name,
+                                         policy == .exclusive ? UInt32(RENAME_EXCL) : 0)
+            guard published == 0 else {
+                if errno == EEXIST { throw SFTPError.destinationExists }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            keep = true
+            if let record { try context?.journal.remove(record.id) }
             progress(offset)
+            return offset
+        } catch {
+            handleFailure(error)
+            if record != nil, error is TransferPaused || (!isUsable && !(error is CancellationError)) {
+                keep = true
+                try save(error is TransferPaused)
+            } else if previous == nil, let record {
+                try context?.journal.remove(record.id)
+            }
+            throw error
         }
-        try cancellation.check()
-        try file.synchronize()
-        try file.close()
-        try cancellation.check()
-        try validateDestination(directory, name: name, policy: policy)
-        // Keep publication relative to the retained parent, including after a rename.
-        let published = renameatx_np(directory.descriptor, temporary, directory.descriptor, name,
-                                     policy == .exclusive ? UInt32(RENAME_EXCL) : 0)
-        guard published == 0 else {
-            if errno == EEXIST { throw SFTPError.destinationExists }
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-        progress(offset)
-        return offset
     }
 
     private func validateDestination(_ directory: LocalTransferDirectory, name: String, policy: DownloadDestinationPolicy) throws {
@@ -303,12 +393,26 @@ public final class SFTPSession {
         }
         let temporary = resuming?.temporary ?? Self.appending(Data(".retriever-\(UUID().uuidString).partial".utf8), to: Data(path.prefix(through: slash)))
         var checkpoint = resuming ?? UploadCheckpoint(temporary: temporary, destination: path, source: identity)
+        let context = cancellation.recovery
+        var record = context.map { _, settings, previous in
+            previous ?? TransferRecovery(id: UUID(), settings: settings, local: directory.url.appendingPathComponent(name), remote: path, bytes: 0, paused: false, upload: checkpoint)
+        }
+        func save(_ bytes: UInt64, paused: Bool = false) throws {
+            guard var current = record, let context else { return }
+            current.bytes = bytes
+            current.upload = checkpoint
+            current.paused = paused
+            try context.journal.save(current)
+            record = current
+        }
+        defer { cancellation.endFile() }
+        var offset: UInt64 = 0
         var handle: Data?
         var created = false
         var opening = false
         var publishing = false
         do {
-            var offset: UInt64 = 0
+            try save(record?.bytes ?? 0)
             if resuming != nil {
                 guard let partial = try attributes(at: temporary) else {
                     guard checkpoint.publicationAttempted, let final = try attributes(at: path),
@@ -317,6 +421,7 @@ public final class SFTPSession {
                     defer { finishHandle(completedHandle) }
                     try verifyUploadPrefix(completedHandle, file: file, size: UInt64(original.st_size), verifying: verifying)
                     try validateUploadSource(descriptor, identity: identity)
+                    if let record { try context?.journal.remove(record.id) }
                     return UInt64(original.st_size)
                 }
                 guard let size = partial.size, size <= UInt64(original.st_size) else { throw SFTPError.uploadResumeMismatch }
@@ -340,8 +445,13 @@ public final class SFTPSession {
                 guard response.remaining == 0 else { throw SFTPError.malformedPacket }
                 opening = false
             }
+            if context != nil {
+                try cancellation.boundary()
+                progress(offset)
+            }
             while true {
                 try cancellation.check()
+                if context != nil { try cancellation.boundary() }
                 guard let bytes = try file.read(upToCount: 32768), !bytes.isEmpty else { break }
                 var write = SFTPWriter()
                 write.bytes(handle!)
@@ -349,8 +459,10 @@ public final class SFTPSession {
                 write.bytes(bytes)
                 _ = try request(6, payload: write, expecting: 101)
                 offset += UInt64(bytes.count)
+                if let record, offset >= record.bytes + 8388608 { try save(offset) }
                 progress(offset)
             }
+            if context != nil { try cancellation.boundary(finishing: true) }
             var final = stat()
             guard fstat(descriptor, &final) == 0,
                   original.st_size == final.st_size, offset == UInt64(original.st_size),
@@ -375,12 +487,25 @@ public final class SFTPSession {
             rename.bytes(path)
             publishing = true
             checkpoint.publicationAttempted = true
+            try save(offset)
             _ = try request(policy == .replaceApproved ? 200 : 18, payload: rename, expecting: 101)
+            if let record { try context?.journal.remove(record.id) }
             return offset
         } catch {
             let uncertainPublication = publishing && exchangeInFlight
             let uncertainCreation = opening && exchangeInFlight
             handleFailure(error)
+            if let record {
+                if error is TransferPaused || (!isUsable && !(error is CancellationError)) {
+                    if let handle, isUsable { finishHandle(handle) }
+                    try save(max(offset, record.bytes), paused: error is TransferPaused)
+                    if uncertainPublication {
+                        throw SFTPError.uploadIncomplete("The server may have completed the upload. Resume from Transfers to check the destination.")
+                    }
+                    throw error
+                }
+                if resuming == nil { try context?.journal.remove(record.id) }
+            }
             // A resumed partial belongs to a prior attempt. Never delete it on
             // verification/conflict failure or cancellation while checking it.
             if resuming != nil, let handle, isUsable { finishHandle(handle) }
@@ -410,6 +535,27 @@ public final class SFTPSession {
             }
             throw error
         }
+    }
+
+    func discard(_ checkpoint: UploadCheckpoint, source: URL) throws {
+        let path = checkpoint.temporary
+        guard let slash = path.lastIndex(of: 47), let end = checkpoint.destination.lastIndex(of: 47),
+              path.prefix(through: slash) == checkpoint.destination.prefix(through: end),
+              String(decoding: path.suffix(from: slash + 1), as: UTF8.self).hasPrefix(".retriever-"),
+              path != checkpoint.destination else { throw SFTPError.uploadResumeMismatch }
+        guard let attributes = try attributes(at: path) else { return }
+        let directory = try LocalTransferDirectory(url: source.deletingLastPathComponent())
+        let fd = try directory.openFile(named: source.lastPathComponent)
+        let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        try validateUploadSource(fd, identity: checkpoint.source)
+        let handle = try openResumeFile(path, attributes: attributes, writable: false)
+        defer { finishHandle(handle) }
+        guard let size = attributes.size, size <= UInt64(checkpoint.source.size) else { throw SFTPError.uploadResumeMismatch }
+        try verifyUploadPrefix(handle, file: file, size: size, verifying: { _ in })
+        guard try self.attributes(at: path) == attributes else { throw SFTPError.uploadResumeMismatch }
+        var remove = SFTPWriter()
+        remove.bytes(path)
+        _ = try request(13, payload: remove, expecting: 101)
     }
 
     private func validateUploadSource(_ descriptor: Int32, identity: UploadSourceIdentity) throws {
@@ -449,6 +595,7 @@ public final class SFTPSession {
         try file.seek(toOffset: 0)
         var offset: UInt64 = 0
         while offset < size {
+            if cancellation.recovery != nil { try cancellation.boundary() }
             try cancellation.check()
             var read = SFTPWriter()
             read.bytes(handle); read.uint64(offset)

@@ -212,9 +212,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private var directory: RemoteDirectory?
     private var cancellation: SFTPCancellation?
     private(set) var busy = false
-    private var resumeProgressID: UUID?
-    private var resumeProgressPhase = 0
-    private var interruptedUpload: (item: TransferItem, upload: InterruptedUpload)?
+    private let pauseButton = NSButton(title: "Pause", target: nil, action: nil)
     private var afterCleanup: (@MainActor () -> Void)?
 
     init(browser: SFTPBrowser = SFTPBrowser(askpass: Bundle.main.executableURL), history: ConnectionHistory = ConnectionHistory(), downloads: DownloadHistory = DownloadHistory(), sshTerminal: SSHTerminalViewController = SSHTerminalViewController()) {
@@ -290,6 +288,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         hostField.font = .systemFont(ofSize: 13, weight: .semibold)
+        pauseButton.setContentHuggingPriority(.required, for: .horizontal)
+        pauseButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        pauseButton.target = self
+        pauseButton.action = #selector(pauseTransfer)
+        pauseButton.isHidden = true
         status.font = .systemFont(ofSize: 11)
         status.textColor = .secondaryLabelColor
         status.lineBreakMode = .byTruncatingMiddle
@@ -334,7 +337,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             paneControls.topAnchor.constraint(greaterThanOrEqualTo: header.topAnchor),
             paneControls.bottomAnchor.constraint(lessThanOrEqualTo: header.bottomAnchor)
         ])
-        for view in [header, scroll, status, empty, progress, sshTerminal.view, syncLabel] {
+        for view in [header, scroll, status, empty, pauseButton, progress, sshTerminal.view, syncLabel] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
         }
@@ -351,7 +354,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -10),
             status.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16), status.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
-            status.trailingAnchor.constraint(equalTo: progress.leadingAnchor, constant: -8),
+            pauseButton.trailingAnchor.constraint(equalTo: progress.leadingAnchor, constant: -6), pauseButton.centerYAnchor.constraint(equalTo: status.centerYAnchor),
+            status.trailingAnchor.constraint(equalTo: pauseButton.leadingAnchor, constant: -8),
             syncLabel.leadingAnchor.constraint(equalTo: status.leadingAnchor),
             syncLabel.trailingAnchor.constraint(equalTo: status.trailingAnchor),
             syncLabel.centerYAnchor.constraint(equalTo: status.centerYAnchor),
@@ -388,7 +392,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private static let actions: [(String, String, String, Selector)] = [
         ("connect", "Open Connection", "plus.circle", #selector(openConnection(_:))),
         ("reconnect", "Reconnect", "arrow.triangle.2.circlepath", #selector(reconnect(_:))),
-        ("history", "Downloads", "clock.arrow.circlepath", #selector(showDownloads(_:))),
+        ("history", "Transfers", "clock.arrow.circlepath", #selector(showDownloads(_:))),
         ("up", "Up", "arrow.up", #selector(goUp(_:))),
         ("refresh", "Refresh", "arrow.clockwise", #selector(refresh(_:))),
         ("upload", "Upload", "arrow.up.circle", #selector(uploadSelected(_:))),
@@ -432,7 +436,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     private var selected: RemoteEntry? { selectedNode?.entry }
     private func enabled(_ action: Selector?) -> Bool {
         if action == #selector(cancel(_:)) { return busy }
-        if action == #selector(resumeInterruptedUpload(_:)) { return !busy && !showingTerminal && interruptedUpload?.upload.settings == activeSettings && interruptedUpload != nil }
+        if action == #selector(resumeInterruptedUpload(_:)) { return !busy && !downloads.journal.records().isEmpty }
         if action == #selector(endTerminal(_:)) { return sshTerminal.terminal != nil }
         if action == #selector(showDownloads(_:)) { return true }
         if showingTerminal && action != #selector(openConnection(_:)) && action != #selector(disconnect(_:)) { return false }
@@ -567,7 +571,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
                 window?.title = "\(activeSettings?.host ?? "Server") — Disconnected — Retriever"
             }
             preparingPreview = false
+            pauseButton.isHidden = true
             busy = false
+            downloadsWindow?.reload()
             activePromiseGroup = nil
             cancellation = nil
             updateControls()
@@ -803,6 +809,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             conflict: { [weak self] in await self?.decideConflict($0, approvedDestination: approvedDestination) ?? .cancel },
             progress: { [weak self] value in
                 guard let self, cancellation === signal else { return }
+                pauseButton.isHidden = !signal.canPause
                 let count = ByteCountFormatter.string(fromByteCount: Int64(clamping: value.bytes), countStyle: .file)
                 if value.finishing {
                     status.stringValue = "Finishing upload… — \(value.item.localURL.lastPathComponent)"
@@ -811,15 +818,27 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
                 status.stringValue = "\(action) file \(value.completedFiles + 1) — \(value.item.localURL.lastPathComponent) — \(count)"
             }, didDownload: { [weak self] item, bytes in
                 self?.downloads.record(filename: item.localURL.lastPathComponent, settings: settings, remotePath: item.remotePath, destination: item.localURL, byteCount: bytes)
+            }, didUpload: { [weak self] item, bytes in
+                self?.downloads.record(filename: item.localURL.lastPathComponent, settings: settings, remotePath: item.remotePath, destination: item.localURL, byteCount: bytes, uploaded: true)
             })
     }
-    private func startTransfer(_ items: [TransferItem], direction: TransferDirection, approvedDestination: URL? = nil, reconnectIfNeeded: Bool = false) {
-        guard !busy, (connected || reconnectIfNeeded), !items.isEmpty, let settings = activeSettings else { return }
+    private func startTransfer(_ items: [TransferItem], direction: TransferDirection, approvedDestination: URL? = nil, reconnectIfNeeded: Bool = false, recovery: TransferRecovery? = nil, restart: Bool = false) {
+        guard !busy, (connected || reconnectIfNeeded), !items.isEmpty, let settings = recovery?.settings ?? activeSettings else { return }
         applyFileConflict = nil
-        let visibleFolder = directory?.path
+        let visibleFolder = activeSettings == settings ? directory?.path : nil
         let expanded = expandedPaths
         runOperation(direction == .upload ? "Preparing upload…" : "Preparing download…") { [self] signal in
-            if reconnectIfNeeded, !(await browser.isConnected) {
+            signal.enableRecovery(downloads.journal, settings: settings, resuming: restart ? nil : recovery)
+            let online = await browser.isConnected
+            if reconnectIfNeeded && (!online || activeSettings != settings) {
+                if activeSettings != settings {
+                    sshTerminal.closeSession()
+                    showingTerminal = false
+                    directory = nil
+                    roots = []
+                    table.reloadData()
+                }
+                activeSettings = settings
                 status.stringValue = "Reconnecting…"
                 let result = try await browser.connect(settings, startingAt: visibleFolder, cancellation: signal)
                 connected = true
@@ -830,6 +849,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
                 show(result)
             }
             let summary = await performTransfer(items, direction: direction, settings: settings, signal: signal, approvedDestination: approvedDestination)
+            if restart, summary.completedFiles == 1, let recovery {
+                try await browser.discard(recovery, cancellation: signal)
+                try downloads.journal.remove(recovery.id)
+            }
             if direction == .upload, !summary.cancelled, !summary.connectionLost, afterCleanup == nil, await browser.isConnected, let visibleFolder {
                 // Refresh errors must not turn successful publications into failures.
                 status.stringValue = "Refreshing folder after upload…"
@@ -849,14 +872,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
         } else {
             status.stringValue = "\(completed) \(summary.completedFiles) files; \(summary.skippedItems) skipped; \(summary.failures.count) failed." + (summary.cancelled ? " Remaining transfers cancelled." : "")
         }
-        if direction == .upload {
-            for failure in summary.failures {
-                if let upload = failure.error as? InterruptedUpload { interruptedUpload = (failure.item, upload) }
-            }
-            if let pending = interruptedUpload, summary.failures.isEmpty, !summary.cancelled, summary.skippedItems == 0, summary.completedFiles > 0,
-               items.contains(where: { $0.remotePath == pending.item.remotePath && $0.localURL == pending.item.localURL }) {
-                interruptedUpload = nil
-            }
+        if summary.failures.contains(where: { $0.error is TransferPaused }) {
+            status.stringValue = "Paused. Resume this file in Transfers. Reselect any remaining items."
+            return
         }
         // A routine cancellation must not leave a modal sheet blocking the file view.
         guard !summary.failures.isEmpty || (!summary.cancelled && summary.skippedItems > 0) else { return }
@@ -871,65 +889,62 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
             ? summary.failures.filter { !$0.item.isDirectory }.map(\.item) : []
         alert.addButton(withTitle: "OK")
         if !retryItems.isEmpty { alert.addButton(withTitle: "Retry Failed Uploads…") }
-        let canResume = direction == .upload && summary.failures.contains { $0.error is InterruptedUpload }
-        if canResume { alert.addButton(withTitle: "Resume Upload") }
+        let recoverable = downloads.journal.records().first { record in summary.failures.contains { $0.item.localURL.standardizedFileURL == record.local.standardizedFileURL && $0.item.remotePath == record.remote && record.settings == activeSettings } }
+        if recoverable != nil { alert.addButton(withTitle: "Show in Transfers") }
         alert.beginSheetModal(for: window) { [weak self] result in
-            if result == .alertSecondButtonReturn { self?.confirmUploadRetry(retryItems) }
-            if result == .alertThirdButtonReturn { self?.resumeInterruptedUpload(nil) }
+            if let recoverable, result == .alertThirdButtonReturn || (result == .alertSecondButtonReturn && retryItems.isEmpty) { self?.showDownloads(nil); self?.downloadsWindow?.select(recoverable.id) }
+            else if result == .alertSecondButtonReturn { self?.confirmUploadRetry(retryItems) }
+
             self?.updateControls()
             self?.applyPendingShellDirectory()
         }
     }
     @objc func resumeInterruptedUpload(_ sender: Any?) {
-        guard enabled(#selector(resumeInterruptedUpload(_:))), let pending = interruptedUpload else { return }
-        applyFileConflict = nil
-        let item = pending.item
-        let upload = pending.upload
-        let folder = directory?.path
-        runOperation("Preparing to resume \(item.localURL.lastPathComponent)…") { [self] signal in
-            var summary = TransferSummary()
-            do {
-                if !(await browser.isConnected) {
-                    status.stringValue = "Reconnecting…"
-                    let result = try await browser.connect(upload.settings, startingAt: folder, cancellation: signal)
+        showDownloads(sender)
+    }
+
+    @objc private func pauseTransfer() {
+        cancellation?.pause()
+        pauseButton.isHidden = true
+    }
+
+    private enum RecoveryAction { case resume, restart, discard }
+
+    private func recover(_ record: TransferRecovery, action: RecoveryAction) {
+        guard !busy, window?.attachedSheet == nil else { return }
+        let needsConnection = action != .discard || record.isUpload
+        if needsConnection, activeSettings != record.settings, connected || sshTerminal.sessionSettings != nil {
+            let alert = NSAlert()
+            alert.messageText = "Switch connection to \(record.settings.host)?"
+            alert.informativeText = "Retriever will disconnect and connect to \(record.settings.username)@\(record.settings.host)."
+            alert.addButton(withTitle: "Switch Connection")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn, !busy else { return }
+        }
+        if action == .discard {
+            runOperation("Discarding partial file…") { [self] signal in
+                let online = await browser.isConnected
+                if needsConnection && (activeSettings != record.settings || !online) {
+                    sshTerminal.closeSession()
+                    showingTerminal = false
+                    directory = nil
+                    roots = []
+                    table.reloadData()
+                    let result = try await browser.connect(record.settings, cancellation: signal)
+                    activeSettings = record.settings
                     connected = true
                     show(result)
-                    window?.title = "\(upload.settings.host) — Retriever"
+                    window?.title = "\(record.settings.host) — Retriever"
                 }
-                @MainActor func resume(_ policy: UploadDestinationPolicy) async throws {
-                    let generation = UUID()
-                    resumeProgressID = generation
-                    resumeProgressPhase = 0
-                    defer { resumeProgressID = nil }
-                    let report: @Sendable (Int, String, UInt64) -> Void = { [weak self] rank, phase, bytes in
-                        Task { @MainActor [weak self] in
-                            guard let self, cancellation === signal, resumeProgressID == generation, rank >= resumeProgressPhase else { return }
-                            resumeProgressPhase = rank
-                            status.stringValue = "\(phase) — \(item.localURL.lastPathComponent) — \(ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file))"
-                        }
-                    }
-                    try await browser.resumeUpload(upload, policy: policy, cancellation: signal,
-                        progress: { report(1, "Uploading", $0) }, verifying: { report(0, "Checking partial upload", $0) }, finishing: { report(2, "Finishing upload…", $0) })
-                }
-                do { try await resume(.exclusive) }
-                catch SFTPError.uploadDestinationExists {
-                    let decision = await decideConflict(TransferConflict(item: item, kind: .file))
-                    try signal.check()
-                    guard decision == .replace else { throw CancellationError() }
-                    try await resume(.replaceApproved)
-                }
-                interruptedUpload = nil
-                summary.completedFiles = 1
-                status.stringValue = "Refreshing folder after upload…"
-                if let folder, let result = try? await browser.directory(folder, cancellation: signal) { show(result) }
-            } catch is CancellationError {
-                summary.cancelled = true
-            } catch {
-                summary.failures = [TransferFailure(item: item, error: error)]
-                summary.connectionLost = !(await browser.isConnected)
+                try await browser.discard(record, cancellation: signal)
+                try downloads.journal.remove(record.id)
+                status.stringValue = "Partial file discarded."
             }
-            showTransferSummary(summary, direction: .upload, items: [item])
+            return
         }
+        let item = TransferItem(remotePath: record.remote, localURL: record.local, isDirectory: false)
+        window?.makeKeyAndOrderFront(nil)
+        startTransfer([item], direction: record.isUpload ? .upload : .download, reconnectIfNeeded: true, recovery: record, restart: action == .restart)
     }
 
     private func confirmUploadRetry(_ items: [TransferItem]) {
@@ -1145,6 +1160,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSOutli
     }
     @objc func showDownloads(_ sender: Any?) {
         if downloadsWindow == nil { downloadsWindow = DownloadsWindowController(history: downloads) }
+        downloadsWindow?.resume = { [weak self] record in self?.recover(record, action: .resume) }
+        downloadsWindow?.discard = { [weak self] record in self?.recover(record, action: .discard) }
+        downloadsWindow?.restart = { [weak self] record in self?.recover(record, action: .restart) }
+        downloadsWindow?.available = { [weak self] in self?.busy == false }
         downloadsWindow?.showWindow(nil)
         downloadsWindow?.window?.makeKeyAndOrderFront(nil)
     }
